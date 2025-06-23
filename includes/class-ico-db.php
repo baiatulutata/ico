@@ -21,7 +21,7 @@ class ICO_Db {
         $table_name = $wpdb->prefix . 'ico_conversion_logs';
         $charset_collate = $wpdb->get_charset_collate();
 
-        // REMOVE ALL INLINE SQL COMMENTS and ensure conversion_date is NOT NULL or has a DEFAULT
+        // Removed all SQL comments as dbDelta is sensitive to them.
         $sql = "CREATE TABLE $table_name (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             attachment_id bigint(20) unsigned NOT NULL,
@@ -33,7 +33,7 @@ class ICO_Db {
             log_message text,
             conversion_date datetime NOT NULL,
             PRIMARY KEY (id),
-            KEY attachment_id_format (attachment_id, format),
+            KEY attachment_id_format (attachment_id, format), -- Combined key for faster lookups
             KEY conversion_date (conversion_date),
             KEY status (status)
         ) $charset_collate;";
@@ -41,8 +41,7 @@ class ICO_Db {
         require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
         dbDelta( $sql );
 
-        // Add an error log to confirm dbDelta was called (optional, for debugging)
-        error_log('ICO_Db: create_table() called. SQL: ' . $sql);
+        error_log('ICO_Db: create_table() called. Table definition attempted.');
     }
 
     /**
@@ -120,14 +119,12 @@ class ICO_Db {
         if ( $existing_log_id ) {
             // Update the existing record with the new status and data
             $updated = $wpdb->update( $table_name, $data, array( 'id' => $existing_log_id ), $format_types, array( '%d' ) );
-            // Log for debugging
             error_log('DB - Updated log for ID: ' . $attachment_id . ' format: ' . $format . ' status: ' . $status . ' (Log ID: ' . $existing_log_id . ')');
             error_log('DB - Data updated: ' . print_r($data, true));
             return (bool) $updated;
         } else {
             // Insert a new record
             $inserted = $wpdb->insert( $table_name, $data, $format_types );
-            // Log for debugging
             error_log('DB - Inserted log for ID: ' . $attachment_id . ' format: ' . $format . ' status: ' . $status . ' (New Log ID: ' . $wpdb->insert_id . ')');
             error_log('DB - Data inserted: ' . print_r($data, true));
             return (bool) $inserted;
@@ -274,7 +271,7 @@ class ICO_Db {
                 // Retrieve status from the aggregated conversion_status array
                 $current_webp_status = $conversion_status[ $id ]['webp_status'] ?? 'pending';
                 $current_webp_size = $conversion_status[ $id ]['webp_size'] ?? 'N/A';
-                $current_avif_status = $conversion_status[ $id ]['avif_status'] ?? 'pending';
+                $current_avif_status = $conversion_status[ $id ]['avif_status'] ?? 'pending'; // Default to pending initially if no data
                 $current_avif_size = $conversion_status[ $id ]['avif_size'] ?? 'N/A';
 
                 $images_data[] = [
@@ -296,6 +293,60 @@ class ICO_Db {
             'total_images' => $attachments_query->found_posts,
         ];
     }
+
+    /**
+     * Gets a batch of unprocessed images for bulk conversion.
+     * Unprocessed means they don't have '_ico_converted_status' or it's not 'complete'.
+     *
+     * @param int $limit The number of images to fetch in this batch.
+     * @return WP_Query
+     */
+    public static function get_unprocessed_images_for_bulk( $limit = 25 ) {
+        $args = array(
+            'post_type'      => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status'    => 'inherit',
+            'posts_per_page' => $limit,
+            'fields'         => 'ids',
+            'orderby'        => 'ID', // Order for consistent batches
+            'order'          => 'ASC',
+            'meta_query'     => array(
+                'relation' => 'OR',
+                array(
+                    'key'     => '_ico_converted_status',
+                    'compare' => 'NOT EXISTS', // Image has never been processed
+                ),
+                array(
+                    'key'     => '_ico_converted_status',
+                    'value'   => 'complete',
+                    'compare' => '!=',         // Image has been processed, but not successfully completed all formats
+                ),
+            ),
+        );
+        return new WP_Query( $args );
+    }
+
+    /**
+     * Gets the latest conversion status for a specific attachment ID and format from logs.
+     *
+     * @param int    $attachment_id
+     * @param string $format
+     * @return string Status (e.g., 'success', 'failed', 'pending', 'skipped') or 'pending' if no log.
+     */
+    public static function get_latest_conversion_status_for_attachment_format( $attachment_id, $format ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ico_conversion_logs';
+
+        $status = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT status FROM {$table_name} WHERE attachment_id = %d AND format = %s ORDER BY conversion_date DESC LIMIT 1",
+                $attachment_id,
+                $format
+            )
+        );
+        return $status ? $status : 'pending';
+    }
+
     /**
      * Clears all entries from the conversion logs table.
      *

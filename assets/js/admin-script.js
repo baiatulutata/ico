@@ -3,25 +3,28 @@
 
     let currentPage = 1;
     let totalPages = 1;
-    let itemsPerPage = 20; // Default
+    let itemsPerPage = 20; // Default items per page for the image list
 
     $(document).ready(function() {
-        // Only run dashboard specific JS on the dashboard page
-        if ($('.ico-dashboard-table').length) {
-            fetchDashboardData(); // Initial load for the dashboard table
-            updateBulkConversionStatus(); // Initial status update for bulk conversion on dashboard
-            setInterval(updateBulkConversionStatus, 15000); // Poll every 15 seconds for general stats
-        }
-
-        // Only run bulk conversion specific JS on the bulk conversion page
-        // (Ensures this block doesn't conflict if #ico-start-bulk-conversion-dashboard exists)
-        if ($('#ico-bulk-conversion-status').length && $('#ico-start-bulk-conversion-dashboard').length === 0) {
+        // --- Unified Initialization for Pages with Progress or Dashboard ---
+        // This ensures the update logic runs on both dashboard and bulk conversion pages
+        // if they contain the relevant elements for progress display.
+        if ($('.ico-progress-bar-wrapper').length || $('.ico-dashboard-table').length) {
+            // Initial call to update status and progress bar immediately on page load
             updateBulkConversionStatus();
-            setInterval(updateBulkConversionStatus, 5000); // Poll every 5 seconds
+            // Set up interval for regular updates. 5 seconds is good for active processes.
+            setInterval(updateBulkConversionStatus, 5000);
         }
 
+        // --- Dashboard Specific Initialization ---
+        // This runs if we are specifically on the dashboard page, to populate the image table.
+        if ($('.ico-dashboard-table').length) {
+            fetchDashboardData();
+        }
 
-        // Handle pagination buttons
+        // --- Event Handlers ---
+
+        // Pagination buttons for the image table
         $('#ico-prev-page').on('click', function() {
             if (currentPage > 1) {
                 currentPage--;
@@ -36,21 +39,21 @@
             }
         });
 
-        // Handle items per page change
+        // Items per page dropdown for the image table
         $('#ico-per-page').on('change', function() {
             itemsPerPage = parseInt($(this).val());
-            currentPage = 1; // Reset to first page
+            currentPage = 1; // Reset to the first page when items per page changes
             fetchDashboardData();
         });
 
-        // Handle single image conversion from dashboard
+        // Handle single image conversion from the dashboard table
         $(document).on('click', '.ico-convert-single-btn', function() {
             const $button = $(this);
             const imageId = $button.data('id');
-            const $row = $button.closest('tr'); // Get the entire row
+            const $row = $button.closest('tr');
 
             $button.prop('disabled', true).text('Converting...');
-            // Visually update status cells immediately
+            // Visually update status cells immediately to "Converting..."
             $row.find('td:nth-child(3)').html('<span class="ico-status-pending">Converting...</span>'); // WebP Status
             $row.find('td:nth-child(5)').html('<span class="ico-status-pending">Converting...</span>'); // AVIF Status
 
@@ -64,7 +67,7 @@
                     console.log('Single conversion successful:', response);
                     // Re-fetch all dashboard data to ensure consistency across stats and table
                     fetchDashboardData();
-                    updateBulkConversionStatus(); // Also update the general stats
+                    updateBulkConversionStatus(); // Also update the general stats right away
                 },
                 error: function(xhr) {
                     $button.text('Convert Now').prop('disabled', false); // Re-enable button
@@ -79,11 +82,11 @@
             });
         });
 
-        // Handle "Convert All Unconverted Images" button on dashboard
+        // Handle "Convert All Unconverted Images" button on the dashboard
         $('#ico-start-bulk-conversion-dashboard').on('click', function(e) {
             e.preventDefault();
             const $button = $(this);
-            const $messageArea = $('.ico-status-message'); // Ensure this element exists on the dashboard
+            const $messageArea = $('.ico-status-message'); // This element is in admin-dashboard.php
 
             $button.prop('disabled', true).text('Starting Bulk Conversion...');
             $messageArea.removeClass('notice-success notice-error').addClass('notice-info').text('Bulk conversion process initiated...').show();
@@ -97,8 +100,9 @@
                 success: function(response) {
                     $button.text('Conversion in Progress...');
                     $messageArea.removeClass('notice-info').addClass('notice-success').text(response.status).show();
-                    updateBulkConversionStatus(); // Update status immediately after starting
-                    fetchDashboardData(); // Refresh list to show initial pending
+                    // Call update functions immediately
+                    updateBulkConversionStatus();
+                    fetchDashboardData(); // Refresh list to show initial pending/processing states
                 },
                 error: function() {
                     $button.prop('disabled', false).text('Convert All Unconverted Images');
@@ -131,7 +135,7 @@
                         // to ensure all statuses and counts are reset on dashboard/tables.
                         setTimeout(function() {
                             window.location.reload();
-                        }, 2000);
+                        }, 2000); // Wait 2 seconds before reloading
                     },
                     error: function(xhr) {
                         $button.text('Clear All Converted Images & Logs').prop('disabled', false);
@@ -141,9 +145,12 @@
                 });
             }
         });
-    });
+    }); // End of $(document).ready
 
-    // Fetches general bulk conversion status and updates progress bar and dashboard stats
+    /**
+     * Fetches general bulk conversion status from the backend
+     * and updates the progress bar and dashboard statistics cards.
+     */
     function updateBulkConversionStatus() {
         $.get(ico_ajax_obj.rest_url + 'ico/v1/status', function(response) {
             var totalImages = response.total;
@@ -151,7 +158,7 @@
             var avifConverted = response.avif_converted;
             var unconvertedImages = response.unconverted;
 
-            // For the progress bar on bulk conversion, it's about total *tasks*. If each image has 2 tasks (webp, avif):
+            // For the progress bar: each image has 2 potential conversions (WebP, AVIF)
             var totalConversionTasks = totalImages * 2;
             var completedConversionTasks = webpConverted + avifConverted;
             var percentageTasks = totalConversionTasks > 0 ? (completedConversionTasks / totalConversionTasks) * 100 : 0;
@@ -162,15 +169,18 @@
             $('#ico-stat-avif').text(avifConverted);
             $('#ico-stat-unconverted').text(unconvertedImages);
 
-            // Update progress bar on dashboard (and bulk conversion page if exists)
+            // Update progress bar on dashboard
             $('.ico-progress-bar-inner').css('width', percentageTasks.toFixed(2) + '%');
             $('.ico-progress-text').text(completedConversionTasks + ' / ' + totalConversionTasks + ' conversions (' + percentageTasks.toFixed(2) + '%)');
         });
     }
 
-    // Fetches detailed dashboard table data
+    /**
+     * Fetches detailed dashboard table data (image list with statuses).
+     * Populates the table and updates pagination controls.
+     */
     function fetchDashboardData() {
-        $('#ico-image-list').html('<tr><td colspan="7" style="text-align:center;">Loading images...</td></tr>');
+        $('#ico-image-list').html('<tr><td colspan="7" style="text-align:center;">Loading images...</td></tr>'); // Show loading state
         $.ajax({
             url: ico_ajax_obj.rest_url + 'ico/v1/dashboard-data',
             method: 'GET',
@@ -197,7 +207,10 @@
         });
     }
 
-    // Populates the dashboard table with image data
+    /**
+     * Populates the dashboard table with image data received from the API.
+     * @param {Array} images - Array of image objects from the API response.
+     */
     function populateDashboardTable(images) {
         let tbody = $('#ico-image-list');
         tbody.empty(); // Clear existing rows
@@ -237,7 +250,11 @@
         });
     }
 
-    // Helper function to format status for display with appropriate styling
+    /**
+     * Helper function to format status strings into HTML with appropriate styling.
+     * @param {string} status - The conversion status (e.g., 'success', 'failed', 'pending', 'skipped').
+     * @returns {string} HTML string for displaying the status.
+     */
     function formatStatus(status) {
         switch(status) {
             case 'success':
