@@ -22,6 +22,20 @@
     color: #444;
 }
 
+/* Dashboard Actions (for the Convert All and Stop buttons) */
+.ico-dashboard-actions {
+    display: flex;
+    gap: 15px; /* Spacing between "Go to Settings" and the button group */
+    align-items: center;
+}
+
+.ico-bulk-action-buttons {
+    display: flex; /* Makes the Convert All and Stop buttons sit side-by-side */
+    gap: 10px; /* Spacing between the two bulk action buttons */
+    align-items: center;
+}
+
+
 /* Statistics Grid */
 .ico-stats-grid {
     display: grid;
@@ -110,6 +124,7 @@
     color: #333;
 }
 
+/* Status Spans */
 .ico-status-success {
     color: #28a745; /* Bootstrap green success */
     font-weight: bold;
@@ -125,6 +140,20 @@
     font-weight: bold;
 }
 
+.ico-status-skipped { /* Skipped (Exists) */
+    color: #6c757d; /* Bootstrap grey secondary */
+    font-weight: bold;
+    font-style: italic;
+}
+
+.ico-status-skipped-size { /* Skipped (Size) */
+    color: #17a2b8; /* Bootstrap info blue */
+    font-weight: bold;
+    font-style: italic;
+}
+
+
+/* Table Controls */
 .ico-table-controls {
     display: flex;
     justify-content: space-between;
@@ -136,26 +165,32 @@
 .ico-pagination button {
     margin: 0 5px;
 }
-/* Dashboard Actions (for the Convert All button) */
-.ico-dashboard-actions {
-    display: flex;
-    gap: 15px;
-    align-items: center;
+
+/* Settings Page Specific */
+.ico-card {
+    background-color: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 5px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    margin-top: 20px;
+}
+
+.ico-card h2 {
+    margin-top: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
 }
 
 /* Danger Zone for Settings Page */
 .ico-danger-zone {
-    margin-top: 30px;
-    padding: 20px;
-    border: 1px solid #dc3545; /* Red border */
+    border-color: #dc3545; /* Red border */
     background-color: #f8d7da; /* Light red background */
-    border-radius: 5px;
     color: #721c24; /* Dark red text */
 }
 
 .ico-danger-zone h2 {
     color: #dc3545;
-    margin-top: 0;
 }
 
 .button-danger {
@@ -178,6 +213,7 @@
 }
 
 /* Notice styles (used for success/error messages) */
+/* These are general WP notices, adjusted for plugin use */
 .notice {
     margin-top: 15px;
     margin-bottom: 0; /* Adjust as needed */
@@ -200,17 +236,4 @@
     border-color: #dc3232; /* Red */
     background-color: #fbeaea;
     color: #a00;
-}
-
-/* Dashboard Actions (for the Convert All and Stop buttons) */
-.ico-dashboard-actions {
-    display: flex;
-    gap: 15px; /* Spacing between "Go to Settings" and the button group */
-    align-items: center;
-}
-
-.ico-bulk-action-buttons {
-    display: flex; /* Makes the Convert All and Stop buttons sit side-by-side */
-    gap: 10px; /* Spacing between the two bulk action buttons */
-    align-items: center;
 }

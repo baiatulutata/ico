@@ -19,7 +19,7 @@ if ( ! defined( 'WPINC' ) ) {
 define( 'ICO_VERSION', '1.0.0' );
 define( 'ICO_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ICO_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
-define( 'ICO_SETTINGS_SLUG', 'ico_settings' );
+define( 'ICO_SETTINGS_SLUG', 'ico_settings' ); // Defines the slug for plugin settings
 
 /**
  * The core plugin class that orchestrates the entire plugin.

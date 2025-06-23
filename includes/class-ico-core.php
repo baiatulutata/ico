@@ -1,12 +1,29 @@
 <?php
+/**
+ * Core plugin setup and hooks.
+ *
+ * @package    Image_Converter_Optimizer
+ * @subpackage Image_Converter_Optimizer/includes
+ */
+
+// Exit if accessed directly.
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
 
 class ICO_Core {
 
+    /**
+     * Constructor for ICO_Core.
+     */
     public function __construct() {
         $this->load_dependencies();
         $this->setup_hooks();
     }
 
+    /**
+     * Loads all necessary plugin files.
+     */
     private function load_dependencies() {
         require_once ICO_PLUGIN_DIR . 'includes/class-ico-admin.php';
         require_once ICO_PLUGIN_DIR . 'includes/class-ico-converter.php';
@@ -19,23 +36,31 @@ class ICO_Core {
         require_once ICO_PLUGIN_DIR . 'includes/class-ico-compatibility.php';
     }
 
+    /**
+     * Sets up all WordPress hooks (actions and filters).
+     */
     private function setup_hooks() {
+        // Admin-specific hooks
         add_action( 'admin_enqueue_scripts', array( 'ICO_Admin', 'enqueue_scripts' ) );
         add_action( 'admin_menu', array( 'ICO_Admin', 'add_admin_menu' ) );
         add_action( 'admin_init', array( 'ICO_Admin', 'register_settings' ) );
 
-        // REST API
+        // REST API initialization
         add_action( 'rest_api_init', array( 'ICO_Rest_Api', 'register_routes' ) );
 
-        // Background Process
+        // Background Process (WP-Cron) initialization
         add_action( 'init', array( 'ICO_Background_Process', 'init' ) );
 
-        // WP-CLI
+        // WP-CLI integration
         if ( defined( 'WP_CLI' ) && WP_CLI ) {
             ICO_CLI::register_commands();
         }
     }
 
+    /**
+     * Plugin activation logic.
+     * Creates necessary directories, adds .htaccess rules, and sets default options.
+     */
     public static function activate() {
         // Create directories for converted images
         $upload_dir = wp_upload_dir();
@@ -50,21 +75,28 @@ class ICO_Core {
             ICO_Htaccess::add_rules();
         }
 
-        // Create database table for logs/stats
+        // Create custom database table for logs/stats
         ICO_Db::create_table();
 
-        // Set default options
+        // Set default options if they don't exist
         $defaults = array(
             'webp_quality' => 82,
             'avif_quality' => 50,
             'batch_size' => 25,
-            'lazy_load' => true,
+            'conditional_conversion_enabled' => true, // Enable conditional conversion by default
+            'min_savings_percentage' => 5, // Require 5% savings by default
+            'lazy_load' => true, // Future feature
         );
         add_option( ICO_SETTINGS_SLUG, $defaults );
 
+        // Flush rewrite rules to ensure .htaccess changes take effect
         flush_rewrite_rules();
     }
 
+    /**
+     * Plugin deactivation logic.
+     * Removes .htaccess rules and clears scheduled cron jobs.
+     */
     public static function deactivate() {
         // Remove .htaccess rules
         if ( strpos( $_SERVER['SERVER_SOFTWARE'], 'Apache' ) !== false ) {
@@ -76,7 +108,10 @@ class ICO_Core {
         wp_clear_scheduled_hook('ico_cron_hook');
     }
 
+    /**
+     * Runs the plugin. (Can be extended for public-facing hooks)
+     */
     public function run() {
-        // The plugin is now running
+        // Public-facing hooks would be defined here if needed
     }
 }

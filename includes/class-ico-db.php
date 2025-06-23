@@ -1,6 +1,6 @@
 <?php
 /**
- * Handles database interactions for Image Converter & Optimizer.
+ * Handles database interactions for Image Converter & Optimizer, including logging and data retrieval.
  *
  * @package    Image_Converter_Optimizer
  * @subpackage Image_Converter_Optimizer/includes
@@ -21,7 +21,7 @@ class ICO_Db {
         $table_name = $wpdb->prefix . 'ico_conversion_logs';
         $charset_collate = $wpdb->get_charset_collate();
 
-        // Removed all SQL comments as dbDelta is sensitive to them.
+        // SQL statement for creating the table. Removed comments that caused dbDelta issues.
         $sql = "CREATE TABLE $table_name (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             attachment_id bigint(20) unsigned NOT NULL,
@@ -33,7 +33,7 @@ class ICO_Db {
             log_message text,
             conversion_date datetime NOT NULL,
             PRIMARY KEY (id),
-            KEY attachment_id_format (attachment_id, format), -- Combined key for faster lookups
+            KEY attachment_id_format (attachment_id, format),
             KEY conversion_date (conversion_date),
             KEY status (status)
         ) $charset_collate;";
@@ -46,18 +46,19 @@ class ICO_Db {
 
     /**
      * Logs a conversion attempt (success, failure, or skipped).
-     * This method now logs or updates the *overall* status for a specific format and attachment.
+     * This method logs or updates the *overall* status for a specific format and attachment,
+     * aggregating results from all sizes.
      *
-     * @param int            $attachment_id The ID of the attachment.
-     * @param string         $format        'webp' or 'avif'.
+     * @param int            $attachment_id    The ID of the attachment.
+     * @param string         $format           The target format ('webp' or 'avif').
      * @param array|WP_Error $converter_result The result from ICO_Converter::convert_image (array of size data or WP_Error).
-     * @return bool True on success, false on failure.
+     * @return bool True on success, false on failure to log.
      */
     public static function log_conversion( $attachment_id, $format, $converter_result ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ico_conversion_logs';
 
-        $status = 'failed'; // Default status if nothing else determines it
+        $status = 'failed'; // Default status
         $log_message = '';
         $total_original_size = 0;
         $total_converted_size = 0;
@@ -70,7 +71,7 @@ class ICO_Db {
             $any_successful_conversion = false; // Was any size actually converted this run?
             $any_skipped_by_size = false; // Was any size skipped due to size?
             $any_skipped_by_exists = false; // Was any size skipped due to existing?
-            $any_failed_size = false; // Was any size explicitly failed?
+            $any_failed_size = false; // Was any size explicitly failed during iteration?
 
             foreach ( $converter_result as $size_data ) {
                 if (isset($size_data['status'])) {
@@ -81,35 +82,35 @@ class ICO_Db {
                         $total_savings += $size_data['savings'];
                     } elseif ($size_data['status'] === 'skipped_size') {
                         $any_skipped_by_size = true;
-                        $total_original_size += $size_data['original_size']; // Still count original size for stats
+                        $total_original_size += $size_data['original_size']; // Still count original size for overall stats
                     } elseif ($size_data['status'] === 'skipped_exists') {
                         $any_skipped_by_exists = true;
                         $total_original_size += $size_data['original_size'];
-                        $total_converted_size += $size_data['converted_size'];
-                        $total_savings += $size_data['savings'];
+                        $total_converted_size += $size_data['converted_size']; // Use size of existing converted file
+                        $total_savings += $size_data['savings']; // Use savings of existing converted file
                     } elseif ($size_data['status'] === 'failed') {
                         $any_failed_size = true;
                     }
                 }
             }
 
-            // Determine the overall status for this format/attachment
+            // Determine the overall status for this format/attachment combination
             if ( $any_successful_conversion ) {
                 $status = 'success';
                 $log_message = 'Successfully converted ' . count(array_filter($converter_result, function($s){ return isset($s['status']) && $s['status'] === 'success'; })) . ' sizes.';
             } elseif ( $any_skipped_by_size ) {
-                // If some were skipped by size, this takes precedence for overall status
                 $status = 'skipped_size';
                 $log_message = 'Conversion skipped for some sizes due to larger file size or insufficient savings.';
-            } elseif ( $any_skipped_by_exists && !$any_successful_conversion && !$any_failed_size) {
-                // Only mark as skipped_exists if nothing else happened and nothing failed.
+            } elseif ( $any_skipped_by_exists && !$any_successful_conversion && !$any_failed_size ) {
+                // Only mark as 'skipped_exists' if no new conversions or failures happened
                 $status = 'skipped_exists';
                 $log_message = 'Conversion skipped for some sizes as they already existed.';
             } elseif ( $any_failed_size ) {
                 $status = 'failed';
                 $log_message = 'Conversion failed for one or more image sizes.';
             } else {
-                $status = 'failed'; // Fallback if no specific success/skip, but not WP_Error
+                // Fallback for cases where no specific success/skip reason is determined
+                $status = 'failed';
                 $log_message = 'No sizes converted successfully or skipped due to specific reasons.';
             }
 
@@ -132,6 +133,8 @@ class ICO_Db {
 
         $format_types = array( '%d', '%s', '%d', '%d', '%d', '%s', '%s', '%s' );
 
+        // Check if a previous log entry for this attachment_id and format exists
+        // We update the most recent one if it exists, otherwise insert a new one.
         $existing_log_id = $wpdb->get_var(
             $wpdb->prepare(
                 "SELECT id FROM {$table_name} WHERE attachment_id = %d AND format = %s ORDER BY conversion_date DESC LIMIT 1",
@@ -141,13 +144,14 @@ class ICO_Db {
         );
 
         if ( $existing_log_id ) {
-            $wpdb->update( $table_name, $data, array( 'id' => $existing_log_id ), $format_types, array( '%d' ) );
-            return (bool) $wpdb->rows_affected;
+            $updated = $wpdb->update( $table_name, $data, array( 'id' => $existing_log_id ), $format_types, array( '%d' ) );
+            return (bool) $updated;
         } else {
-            $wpdb->insert( $table_name, $data, $format_types );
-            return (bool) $wpdb->insert_id;
+            $inserted = $wpdb->insert( $table_name, $data, $format_types );
+            return (bool) $inserted;
         }
     }
+
 
     /**
      * Gets the total count of images in the media library.
@@ -265,7 +269,7 @@ class ICO_Db {
                 $attachment_id = $row['attachment_id'];
                 $format = $row['format'];
 
-                // Initialize if not set
+                // Initialize if not set for this attachment
                 if ( ! isset( $conversion_status[ $attachment_id ] ) ) {
                     $conversion_status[ $attachment_id ] = [
                         'webp_status' => 'pending', 'webp_size' => 'N/A',
@@ -275,8 +279,12 @@ class ICO_Db {
 
                 // Update based on the latest log entry's status
                 $conversion_status[ $attachment_id ][ $format . '_status' ] = $row['status'];
-                // Only show size if conversion was successful, otherwise 'N/A'
-                $conversion_status[ $attachment_id ][ $format . '_size' ] = ($row['status'] === 'success') ? size_format( $row['converted_size_total'], 2 ) : 'N/A';
+                // Only show size if conversion was successful or skipped_exists (meaning a file exists)
+                if ( in_array($row['status'], ['success', 'skipped_exists']) ) {
+                    $conversion_status[ $attachment_id ][ $format . '_size' ] = size_format( $row['converted_size_total'], 2 );
+                } else {
+                    $conversion_status[ $attachment_id ][ $format . '_size' ] = 'N/A';
+                }
             }
 
             foreach ( $image_ids as $id ) {
@@ -285,10 +293,10 @@ class ICO_Db {
                 $original_file_path = get_attached_file( $id );
                 $original_size = file_exists($original_file_path) ? size_format( filesize( $original_file_path ), 2 ) : 'N/A';
 
-                // Retrieve status from the aggregated conversion_status array
+                // Retrieve status from the aggregated conversion_status array, defaulting to 'pending'
                 $current_webp_status = $conversion_status[ $id ]['webp_status'] ?? 'pending';
                 $current_webp_size = $conversion_status[ $id ]['webp_size'] ?? 'N/A';
-                $current_avif_status = $conversion_status[ $id ]['avif_status'] ?? 'pending'; // Default to pending initially if no data
+                $current_avif_status = $conversion_status[ $id ]['avif_status'] ?? 'pending';
                 $current_avif_size = $conversion_status[ $id ]['avif_size'] ?? 'N/A';
 
                 $images_data[] = [
@@ -313,30 +321,32 @@ class ICO_Db {
 
     /**
      * Gets a batch of unprocessed images for bulk conversion.
-     * Unprocessed means they don't have '_ico_converted_status' or it's not 'complete'.
+     * An image is considered "unprocessed" if its `_ico_converted_status` post meta is
+     * missing or not set to 'complete'. This allows re-processing of failed/incomplete attempts.
      *
-     * @param int $limit The number of images to fetch in this batch.
-     * @return WP_Query
+     * @param int $limit The number of images (attachment IDs) to fetch in this batch.
+     * @return WP_Query A WP_Query object containing the unprocessed attachment IDs.
      */
     public static function get_unprocessed_images_for_bulk( $limit = 25 ) {
         $args = array(
             'post_type'      => 'attachment',
-            'post_mime_type' => 'image',
-            'post_status'    => 'inherit',
+            'post_mime_type' => 'image', // Only get image attachments
+            'post_status'    => 'inherit', // Default status for attachments
             'posts_per_page' => $limit,
-            'fields'         => 'ids',
-            'orderby'        => 'ID', // Order for consistent batches
+            'fields'         => 'ids', // Only retrieve IDs for performance
+            'orderby'        => 'ID', // Order by ID for consistent batching
             'order'          => 'ASC',
             'meta_query'     => array(
-                'relation' => 'OR',
+                'relation' => 'OR', // Images should match either condition
                 array(
                     'key'     => '_ico_converted_status',
-                    'compare' => 'NOT EXISTS', // Image has never been processed
+                    'compare' => 'NOT EXISTS', // Image has never been touched by the plugin
                 ),
                 array(
                     'key'     => '_ico_converted_status',
                     'value'   => 'complete',
-                    'compare' => '!=',         // Image has been processed, but not successfully completed all formats
+                    'compare' => '!=',         // Image has been processed, but not marked 'complete'
+                    // This catches 'pending', 'incomplete', 'failed', 'partial_failure', etc.
                 ),
             ),
         );
@@ -344,11 +354,11 @@ class ICO_Db {
     }
 
     /**
-     * Gets the latest conversion status for a specific attachment ID and format from logs.
+     * Gets the latest conversion status for a specific attachment ID and format from the logs table.
      *
-     * @param int    $attachment_id
-     * @param string $format
-     * @return string Status (e.g., 'success', 'failed', 'pending', 'skipped') or 'pending' if no log.
+     * @param int    $attachment_id The ID of the attachment.
+     * @param string $format        The format ('webp' or 'avif').
+     * @return string The status (e.g., 'success', 'failed', 'pending', 'skipped_size', 'skipped_exists') or 'pending' if no log entry exists.
      */
     public static function get_latest_conversion_status_for_attachment_format( $attachment_id, $format ) {
         global $wpdb;
@@ -361,7 +371,7 @@ class ICO_Db {
                 $format
             )
         );
-        return $status ? $status : 'pending';
+        return $status ? $status : 'pending'; // Default to 'pending' if no log entry is found
     }
 
     /**
@@ -383,7 +393,8 @@ class ICO_Db {
 
     /**
      * Clears the '_ico_converted_status' meta key from all attachment posts.
-     * This ensures images are considered "unconverted" in the backend after a clear.
+     * This ensures images are considered "unconverted" in the backend after a clear
+     * or if you want to force a re-process.
      *
      * @return int|false The number of deleted meta rows on success, false on error.
      */

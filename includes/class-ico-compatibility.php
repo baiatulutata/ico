@@ -32,7 +32,7 @@ class ICO_Compatibility {
                 'check'    => self::is_gd_installed(),
                 'required' => 'Installed',
                 'current'  => self::is_gd_installed() ? 'Installed' : 'Not Installed',
-                'message'  => 'The GD library is required for image manipulation.',
+                'message'  => 'The GD library is required for image manipulation, especially for WebP conversion.',
             ],
             'webp_support' => [
                 'label'    => 'WebP Support (in GD)',
@@ -46,34 +46,34 @@ class ICO_Compatibility {
                 'check'    => self::is_imagemagick_installed(),
                 'required' => 'Installed',
                 'current'  => self::is_imagemagick_installed() ? 'Installed' : 'Not Installed',
-                'message'  => 'ImageMagick is the recommended library for the best quality and format support, including AVIF.',
+                'message'  => 'ImageMagick is the recommended library for the best quality and format support, including AVIF. It may need to be installed separately on your server.',
             ],
             'avif_support' => [
                 'label'    => 'AVIF Support (in ImageMagick)',
                 'check'    => self::supports_avif(),
                 'required' => 'Enabled',
                 'current'  => self::supports_avif() ? 'Enabled' : 'Disabled',
-                'message'  => 'AVIF support is required to create .avif images. This requires a recent version of ImageMagick compiled with AVIF support.',
+                'message'  => 'AVIF support is required to create .avif images. This typically requires a sufficiently recent version of ImageMagick compiled with AVIF support.',
             ],
             'htaccess_writable' => [
                 'label'    => '.htaccess Writable',
                 'check'    => self::is_htaccess_writable(),
                 'required' => 'Writable',
                 'current'  => self::is_htaccess_writable() ? 'Writable' : 'Not Writable',
-                'message'  => 'A writable .htaccess file is needed for automatic serving rules on Apache servers. If not writable, you must add the rules manually.',
+                'message'  => 'A writable .htaccess file is needed for automatic serving rules on Apache servers. If not writable, you must add the rules manually (check Nginx rules in settings if using Nginx).',
             ],
             'upload_dirs_writable' => [
-                'label'    => 'Upload Directories',
+                'label'    => 'Upload Directories Writable',
                 'check'    => self::are_upload_dirs_writable(),
                 'required' => 'Writable',
                 'current'  => self::are_upload_dirs_writable() ? 'Writable' : 'Not Writable',
-                'message'  => 'The plugin needs to create `webp-converted` and `avif-converted` directories inside `wp-content/uploads`.',
+                'message'  => 'The plugin needs to create `webp-converted` and `avif-converted` directories inside your `wp-content/uploads` folder and write converted images there.',
             ],
         ];
     }
 
     /**
-     * Checks if the PHP version is sufficient.
+     * Checks if the PHP version meets the minimum requirement.
      * @return bool
      */
     public static function check_php_version() {
@@ -81,7 +81,7 @@ class ICO_Compatibility {
     }
 
     /**
-     * Checks if the GD library extension is installed.
+     * Checks if the GD library extension is installed and loaded.
      * @return bool
      */
     public static function is_gd_installed() {
@@ -101,7 +101,7 @@ class ICO_Compatibility {
     }
 
     /**
-     * Checks if the ImageMagick extension is installed.
+     * Checks if the ImageMagick extension is installed and loaded.
      * @return bool
      */
     public static function is_imagemagick_installed() {
@@ -110,6 +110,7 @@ class ICO_Compatibility {
 
     /**
      * Checks if the installed ImageMagick library has AVIF support.
+     *
      * @return bool
      */
     public static function supports_avif() {
@@ -117,6 +118,8 @@ class ICO_Compatibility {
             return false;
         }
         // Imagick::queryFormats() returns an array of supported formats.
+        // AVIF support typically requires a recent Imagick version (e.g., 3.4.4+)
+        // and Imagick library 7.0.10-53 or higher.
         return in_array( 'AVIF', Imagick::queryFormats() );
     }
 
@@ -126,16 +129,17 @@ class ICO_Compatibility {
      * @return bool
      */
     public static function is_htaccess_writable() {
-        // This check is not relevant for Nginx or IIS.
+        // This check is not relevant for Nginx or IIS, so return true if not Apache.
         if ( strpos( $_SERVER['SERVER_SOFTWARE'], 'Apache' ) === false ) {
-            return true; // Not applicable, so we don't block on it.
+            return true;
         }
         $htaccess_file = get_home_path() . '.htaccess';
-        return is_writable( $htaccess_file );
+        // Check if file exists and is writable, or if directory is writable (so it can be created)
+        return ( file_exists( $htaccess_file ) && is_writable( $htaccess_file ) ) || is_writable( dirname( $htaccess_file ) );
     }
 
     /**
-     * Checks if the required directories in wp-content/uploads can be created.
+     * Checks if the wp-content/uploads base directory is writable.
      * @return bool
      */
     public static function are_upload_dirs_writable() {
