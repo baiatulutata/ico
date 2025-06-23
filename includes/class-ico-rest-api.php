@@ -27,10 +27,15 @@ class ICO_Rest_Api {
             'callback'            => array( __CLASS__, 'start_bulk_conversion' ),
             'permission_callback' => function () { return current_user_can( 'manage_options' ); },
         ) );
+        register_rest_route( 'ico/v1', '/stop-bulk', array( // NEW ENDPOINT
+            'methods'             => 'POST',
+            'callback'            => array( __CLASS__, 'stop_bulk_conversion' ),
+            'permission_callback' => function () { return current_user_can( 'manage_options' ); },
+        ) );
         register_rest_route( 'ico/v1', '/dashboard-data', array(
             'methods'             => 'GET',
             'callback'            => array( __CLASS__, 'get_dashboard_data' ),
-            'permission_callback' => function () { return current_user_can( 'manage_options' ); }, // Only admin can see dashboard data
+            'permission_callback' => function () { return current_user_can( 'manage_options' ); },
             'args'                => [
                 'per_page' => [
                     'type'     => 'integer',
@@ -75,13 +80,15 @@ class ICO_Rest_Api {
         $total_images     = ICO_Db::get_total_images_count();
         $webp_converted   = ICO_Db::get_webp_converted_count();
         $avif_converted   = ICO_Db::get_avif_converted_count();
-        $unconverted      = $total_images - ICO_Db::get_converted_images_count(); // Unconverted is total - unique converted
+        $unconverted      = $total_images - ICO_Db::get_converted_images_count();
+        $is_bulk_running  = (bool) wp_next_scheduled( 'ico_cron_hook' ); // Check if cron is scheduled
 
         return new WP_REST_Response( array(
             'total'       => $total_images,
             'webp_converted' => $webp_converted,
             'avif_converted' => $avif_converted,
             'unconverted' => $unconverted,
+            'is_bulk_running' => $is_bulk_running, // NEW: report running status
         ), 200 );
     }
 
@@ -98,6 +105,20 @@ class ICO_Rest_Api {
         return new WP_REST_Response( array( 'status' => 'Bulk conversion started.' ), 200 );
     }
 
+    /**
+     * Stops the background bulk conversion process. (NEW METHOD)
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response
+     */
+    public static function stop_bulk_conversion( WP_REST_Request $request ) {
+        ICO_Background_Process::stop();
+        // Check if it actually stopped
+        if ( ! wp_next_scheduled( 'ico_cron_hook' ) ) {
+            return new WP_REST_Response( array( 'status' => 'Bulk conversion stopped successfully.' ), 200 );
+        } else {
+            return new WP_REST_Response( array( 'status' => 'Failed to stop bulk conversion.', 'error' => true ), 500 );
+        }
+    }
     /**
      * Retrieves data for the dashboard, including stats and paginated image list.
      * @param WP_REST_Request $request

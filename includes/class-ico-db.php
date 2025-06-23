@@ -67,25 +67,52 @@ class ICO_Db {
             $status = 'failed';
             $log_message = $converter_result->get_error_message();
         } else if ( is_array( $converter_result ) && ! empty( $converter_result ) ) {
-            $any_actual_conversion = false; // Tracks if any file was genuinely converted (not skipped)
+            $any_successful_conversion = false; // Was any size actually converted this run?
+            $any_skipped_by_size = false; // Was any size skipped due to size?
+            $any_skipped_by_exists = false; // Was any size skipped due to existing?
+            $any_failed_size = false; // Was any size explicitly failed?
+
             foreach ( $converter_result as $size_data ) {
-                // Sum up sizes only for files that were actually converted, not just skipped
-                if ( isset( $size_data['path'] ) && !isset($size_data['skipped']) ) {
-                    $total_original_size += $size_data['original_size'];
-                    $total_converted_size += $size_data['converted_size'];
-                    $total_savings += $size_data['savings'];
-                    $any_actual_conversion = true;
+                if (isset($size_data['status'])) {
+                    if ($size_data['status'] === 'success') {
+                        $any_successful_conversion = true;
+                        $total_original_size += $size_data['original_size'];
+                        $total_converted_size += $size_data['converted_size'];
+                        $total_savings += $size_data['savings'];
+                    } elseif ($size_data['status'] === 'skipped_size') {
+                        $any_skipped_by_size = true;
+                        $total_original_size += $size_data['original_size']; // Still count original size for stats
+                    } elseif ($size_data['status'] === 'skipped_exists') {
+                        $any_skipped_by_exists = true;
+                        $total_original_size += $size_data['original_size'];
+                        $total_converted_size += $size_data['converted_size'];
+                        $total_savings += $size_data['savings'];
+                    } elseif ($size_data['status'] === 'failed') {
+                        $any_failed_size = true;
+                    }
                 }
             }
 
-            if ( $any_actual_conversion ) {
+            // Determine the overall status for this format/attachment
+            if ( $any_successful_conversion ) {
                 $status = 'success';
-                $log_message = 'Successfully converted ' . count( $converter_result ) . ' image sizes.';
+                $log_message = 'Successfully converted ' . count(array_filter($converter_result, function($s){ return isset($s['status']) && $s['status'] === 'success'; })) . ' sizes.';
+            } elseif ( $any_skipped_by_size ) {
+                // If some were skipped by size, this takes precedence for overall status
+                $status = 'skipped_size';
+                $log_message = 'Conversion skipped for some sizes due to larger file size or insufficient savings.';
+            } elseif ( $any_skipped_by_exists && !$any_successful_conversion && !$any_failed_size) {
+                // Only mark as skipped_exists if nothing else happened and nothing failed.
+                $status = 'skipped_exists';
+                $log_message = 'Conversion skipped for some sizes as they already existed.';
+            } elseif ( $any_failed_size ) {
+                $status = 'failed';
+                $log_message = 'Conversion failed for one or more image sizes.';
             } else {
-                // If the converter returned data but no actual conversion happened (e.g., all were pre-existing)
-                $status = 'skipped';
-                $log_message = 'All image sizes for this format were already converted or could not be converted.';
+                $status = 'failed'; // Fallback if no specific success/skip, but not WP_Error
+                $log_message = 'No sizes converted successfully or skipped due to specific reasons.';
             }
+
         } else {
             // Case where converter returns empty array or null, indicating nothing to convert or no eligible sizes
             $status = 'failed';
@@ -103,11 +130,8 @@ class ICO_Db {
             'conversion_date'     => current_time( 'mysql' ),
         );
 
-        $format_types = array( '%d', '%s', '%d', '%d', '%d', '%s', '%s', '%s' ); // Matching $data keys
+        $format_types = array( '%d', '%s', '%d', '%d', '%d', '%s', '%s', '%s' );
 
-        // Check if a previous log entry for this attachment_id and format exists
-        // We'll update the *most recent* one if it exists, otherwise insert a new one.
-        // This is a simple upsert logic: find the latest entry for this attachment+format.
         $existing_log_id = $wpdb->get_var(
             $wpdb->prepare(
                 "SELECT id FROM {$table_name} WHERE attachment_id = %d AND format = %s ORDER BY conversion_date DESC LIMIT 1",
@@ -117,20 +141,13 @@ class ICO_Db {
         );
 
         if ( $existing_log_id ) {
-            // Update the existing record with the new status and data
-            $updated = $wpdb->update( $table_name, $data, array( 'id' => $existing_log_id ), $format_types, array( '%d' ) );
-            error_log('DB - Updated log for ID: ' . $attachment_id . ' format: ' . $format . ' status: ' . $status . ' (Log ID: ' . $existing_log_id . ')');
-            error_log('DB - Data updated: ' . print_r($data, true));
-            return (bool) $updated;
+            $wpdb->update( $table_name, $data, array( 'id' => $existing_log_id ), $format_types, array( '%d' ) );
+            return (bool) $wpdb->rows_affected;
         } else {
-            // Insert a new record
-            $inserted = $wpdb->insert( $table_name, $data, $format_types );
-            error_log('DB - Inserted log for ID: ' . $attachment_id . ' format: ' . $format . ' status: ' . $status . ' (New Log ID: ' . $wpdb->insert_id . ')');
-            error_log('DB - Data inserted: ' . print_r($data, true));
-            return (bool) $inserted;
+            $wpdb->insert( $table_name, $data, $format_types );
+            return (bool) $wpdb->insert_id;
         }
     }
-
 
     /**
      * Gets the total count of images in the media library.

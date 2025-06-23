@@ -201,3 +201,16 @@
     background-color: #fbeaea;
     color: #a00;
 }
+
+/* Dashboard Actions (for the Convert All and Stop buttons) */
+.ico-dashboard-actions {
+    display: flex;
+    gap: 15px; /* Spacing between "Go to Settings" and the button group */
+    align-items: center;
+}
+
+.ico-bulk-action-buttons {
+    display: flex; /* Makes the Convert All and Stop buttons sit side-by-side */
+    gap: 10px; /* Spacing between the two bulk action buttons */
+    align-items: center;
+}

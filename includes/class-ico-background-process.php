@@ -52,11 +52,18 @@ class ICO_Background_Process {
     /**
      * Stops the bulk conversion process by clearing the WP-Cron event.
      */
+    /**
+     * Stops the bulk conversion process by clearing the WP-Cron event.
+     * Ensure to clear with the correct hook name and arguments if any.
+     */
     public static function stop() {
+        // Clear the specific hook. If wp_schedule_event was called with args,
+        // wp_clear_scheduled_hook also needs to be called with those same args.
+        // In our case, no args are passed to wp_schedule_event, so no args here either.
         $timestamp = wp_next_scheduled('ico_cron_hook');
         if ( $timestamp ) {
-            wp_clear_scheduled_hook('ico_cron_hook'); // No args needed if not passing custom args
-            error_log('ICO_Background_Process: ico_cron_hook cleared.');
+            wp_clear_scheduled_hook('ico_cron_hook');
+            error_log('ICO_Background_Process: ico_cron_hook cleared. Timestamp was: ' . $timestamp);
         } else {
             error_log('ICO_Background_Process: ico_cron_hook not found to clear.');
         }
@@ -138,4 +145,5 @@ class ICO_Background_Process {
             self::stop(); // All done
         }
     }
+
 }

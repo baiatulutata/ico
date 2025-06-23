@@ -22,6 +22,6 @@
         <h2>Danger Zone</h2>
         <p><strong>Warning:</strong> This action will delete all converted WebP/AVIF image files and clear all conversion logs from the database. This cannot be undone.</p>
         <button id="ico-clear-converted-images" class="button button-danger">Clear All Converted Images & Logs</button>
-        <p id="ico-clear-status-message" class="notice notice-info" style="display:none;"></p>
+        <p id="ico-clear-status-message" class="notice" style="display:none;"></p>
     </div>
 </div>

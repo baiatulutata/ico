@@ -5,7 +5,10 @@
         <p>Welcome to your Image Converter & Optimizer Dashboard. Here you can see the overall conversion progress and manage your settings.</p>
         <div class="ico-dashboard-actions">
             <a href="<?php echo esc_url( admin_url( 'admin.php?page=ico-settings' ) ); ?>" class="button button-secondary">Go to Settings</a>
-            <button id="ico-start-bulk-conversion-dashboard" class="button button-primary button-hero">Convert All Unconverted Images</button>
+            <div class="ico-bulk-action-buttons">
+                <button id="ico-start-bulk-conversion-dashboard" class="button button-primary button-hero" disabled>Convert All Unconverted Images</button>
+                <button id="ico-stop-bulk-conversion-dashboard" class="button button-secondary button-hero" style="display:none;">Pause/Stop Conversion</button>
+            </div>
         </div>
     </div>
 
@@ -36,7 +39,7 @@
             <div class="ico-progress-bar-inner"></div>
         </div>
         <p class="ico-progress-text">Loading status...</p>
-        <p class="ico-status-message" style="display:none; margin-top:10px;"></p>
+        <p class="ico-status-message notice" style="display:none; margin-top:10px;"></p>
     </div>
 
     <hr>
