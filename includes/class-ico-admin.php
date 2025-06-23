@@ -35,16 +35,6 @@ class ICO_Admin {
             array( __CLASS__, 'display_dashboard_page' )
         );
 
-        // Submenu for Bulk Conversion (if you want a separate page later, currently dashboard covers)
-        // add_submenu_page(
-        //     'ico-dashboard',
-        //     __( 'Bulk Conversion', 'image-converter-optimizer' ),
-        //     __( 'Bulk Conversion', 'image-converter-optimizer' ),
-        //     'manage_options',
-        //     'ico-bulk-conversion',
-        //     array( __CLASS__, 'display_bulk_conversion_page' )
-        // );
-
         // Submenu for Settings
         add_submenu_page(
             'ico-dashboard',
@@ -181,8 +171,9 @@ class ICO_Admin {
 
     /**
      * Renders a number input field for settings.
+     * All output attributes are escaped using esc_attr().
      *
-     * @param array $args Arguments for the field.
+     * @param array $args Arguments for the field: name, label, min, max, step.
      */
     public static function render_number_field( $args ) {
         $options = get_option( ICO_SETTINGS_SLUG );
@@ -191,21 +182,24 @@ class ICO_Admin {
         $max = isset($args['max']) ? 'max="' . esc_attr($args['max']) . '"' : '';
         $step = isset($args['step']) ? 'step="' . esc_attr($args['step']) . '"' : '';
 
-        echo "<input type='number' id='" . esc_attr( $args['name'] ) . "' name='" . esc_attr( ICO_SETTINGS_SLUG ) . "[" . esc_attr( $args['name'] ) . "]' value='" . esc_attr( $value ) . "' {$min} {$max} {$step} />";
+        // All dynamic attributes are run through esc_attr()
+        echo "<input type='number' id='" . esc_attr( $args['name'] ) . "' name='" . esc_attr( ICO_SETTINGS_SLUG ) . "[" . esc_attr( $args['name'] ) . "]' value='" . esc_attr( $value ) . "' {".esc_attr($min)."} {".esc_attr($max)."} {".esc_attr($step)."} />";
         if ($args['name'] === 'min_savings_percentage') {
-            echo "%";
+            echo "%"; // This is literal text, no escaping needed here
         }
-        echo "<p class='description'>" . esc_html( $args['label'] ) . "</p>";
+        echo "<p class='description'>" . esc_html( $args['label'] ) . "</p>"; // Label is already escaped via esc_html()
     }
 
     /**
      * Renders a checkbox field for settings.
+     * All output attributes and text are escaped.
      *
-     * @param array $args Arguments for the field.
+     * @param array $args Arguments for the field: name, label.
      */
     public static function render_checkbox_field( $args ) {
         $options = get_option( ICO_SETTINGS_SLUG );
         $checked = isset( $options[ $args['name'] ] ) && $options[ $args['name'] ];
+        // value='1' is static, checked() handles its own output escaping.
         echo "<input type='checkbox' id='" . esc_attr( $args['name'] ) . "' name='" . esc_attr( ICO_SETTINGS_SLUG ) . "[" . esc_attr( $args['name'] ) . "]' value='1' " . checked( 1, $checked, false ) . " />";
         echo "<label for='" . esc_attr( $args['name'] ) . "'>" . esc_html( $args['label'] ) . "</label>";
     }
@@ -221,7 +215,8 @@ class ICO_Admin {
 
         // Retrieve current options to preserve those not submitted via the current form
         $old_options = get_option(ICO_SETTINGS_SLUG, array());
-        $sanitized_input = array_merge($old_options, $sanitized_input); // Start with old options
+        // Start with old options, then merge/override with submitted sanitized values
+        $sanitized_input = array_merge($old_options, $sanitized_input);
 
         // Sanitize quality settings
         if ( isset( $input['webp_quality'] ) ) {
@@ -236,9 +231,11 @@ class ICO_Admin {
         }
 
         // Sanitize Conditional Conversion settings
+        // Checkbox value '1' (checked) is submitted only if checked, so isset means true
         $sanitized_input['conditional_conversion_enabled'] = isset( $input['conditional_conversion_enabled'] ) ? true : false;
         if ( isset( $input['min_savings_percentage'] ) ) {
             $sanitized_input['min_savings_percentage'] = floatval( $input['min_savings_percentage'] );
+            // Ensure percentage stays within 0-100 bounds
             if ($sanitized_input['min_savings_percentage'] < 0) $sanitized_input['min_savings_percentage'] = 0;
             if ($sanitized_input['min_savings_percentage'] > 100) $sanitized_input['min_savings_percentage'] = 100;
         }

@@ -61,16 +61,31 @@ class ICO_Core {
      * Plugin activation logic.
      * Creates necessary directories, adds .htaccess rules, and sets default options.
      */
+    /**
+     * Plugin activation logic.
+     * Creates necessary directories, adds .htaccess rules, and sets default options.
+     */
     public static function activate() {
+        // Ensure WP_Filesystem is loaded for file operations during activation.
+        require_once( ABSPATH . 'wp-admin/includes/file.php' );
+        WP_Filesystem();
+        global $wp_filesystem;
+
         // Create directories for converted images
         $upload_dir = wp_upload_dir();
         $webp_dir = $upload_dir['basedir'] . '/webp-converted';
         $avif_dir = $upload_dir['basedir'] . '/avif-converted';
 
-        if ( ! is_dir( $webp_dir ) ) { wp_mkdir_p( $webp_dir ); }
-        if ( ! is_dir( $avif_dir ) ) { wp_mkdir_p( $avif_dir ); }
+        // Use WP_Filesystem::mkdir for directory creation
+        if ( ! $wp_filesystem->is_dir( $webp_dir ) ) {
+            $wp_filesystem->mkdir( $webp_dir, 0755 ); // 0755 permissions
+        }
+        if ( ! $wp_filesystem->is_dir( $avif_dir ) ) {
+            $wp_filesystem->mkdir( $avif_dir, 0755 ); // 0755 permissions
+        }
 
         // Add .htaccess rules if on Apache
+        // ICO_Htaccess::add_rules() internally uses insert_with_markers which is WP_Filesystem aware.
         if ( strpos( $_SERVER['SERVER_SOFTWARE'], 'Apache' ) !== false ) {
             ICO_Htaccess::add_rules();
         }
@@ -83,9 +98,9 @@ class ICO_Core {
             'webp_quality' => 82,
             'avif_quality' => 50,
             'batch_size' => 25,
-            'conditional_conversion_enabled' => true, // Enable conditional conversion by default
-            'min_savings_percentage' => 5, // Require 5% savings by default
-            'lazy_load' => true, // Future feature
+            'conditional_conversion_enabled' => true,
+            'min_savings_percentage' => 5,
+            'lazy_load' => true,
         );
         add_option( ICO_SETTINGS_SLUG, $defaults );
 
@@ -98,7 +113,7 @@ class ICO_Core {
      * Removes .htaccess rules and clears scheduled cron jobs.
      */
     public static function deactivate() {
-        // Remove .htaccess rules
+        // Remove .htaccess rules. ICO_Htaccess::remove_rules() is WP_Filesystem aware.
         if ( strpos( $_SERVER['SERVER_SOFTWARE'], 'Apache' ) !== false ) {
             ICO_Htaccess::remove_rules();
         }

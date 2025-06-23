@@ -21,37 +21,24 @@ class ICO_Nginx {
      */
     public static function get_rules() {
         $upload_dir = wp_upload_dir();
-        // Get relative paths from document root for Nginx rules
-        // Nginx paths are typically relative to the server root, or absolute
-        // Here, we provide them relative to the WordPress root, assuming wp-content/uploads path structure
         $webp_relative_dir = str_replace( ABSPATH, '/', $upload_dir['basedir'] ) . '/webp-converted';
         $avif_relative_dir = str_replace( ABSPATH, '/', $upload_dir['basedir'] ) . '/avif-converted';
 
-        $rules = <<<EOT
-# BEGIN Image Converter Optimizer
-location ~* ^/wp-content/uploads/(.*)\.(png|jpe?g)$ {
-    # Ensure Vary header is set for Accept for correct caching by CDNs/proxies
-    add_header Vary Accept;
-
-    # Set paths for potential WebP and AVIF files
-    set \$avif_path "{$avif_relative_dir}/\$1.\$2.avif";
-    set \$webp_path "{$webp_relative_dir}/\$1.\$2.webp";
-
-    # Try serving AVIF if browser supports it and AVIF file exists
-    if (\$http_accept ~* "image/avif") {
-        try_files \$avif_path \$uri;
-    }
-
-    # Try serving WebP if browser supports it and WebP file exists
-    if (\$http_accept ~* "image/webp") {
-        try_files \$webp_path \$uri;
-    }
-
-    # Fallback to original image if neither AVIF nor WebP are served
-    try_files \$uri =404;
-}
-# END Image Converter Optimizer
-EOT;
+        // Use standard strings with newlines instead of heredoc
+        $rules = "# BEGIN Image Converter Optimizer\n" .
+            "location ~* ^/wp-content/uploads/(.*)\\.(png|jpe?g)$ {\n" .
+            "    add_header Vary Accept;\n" .
+            "    set \$avif_path \"" . esc_attr($avif_relative_dir) . "/\$1.\$2.avif\";\n" .
+            "    set \$webp_path \"" . esc_attr($webp_relative_dir) . "/\$1.\$2.webp\";\n\n" .
+            "    if (\$http_accept ~* \"image/avif\") {\n" .
+            "        try_files \$avif_path \$uri =404;\n" .
+            "    }\n\n" .
+            "    if (\$http_accept ~* \"image/webp\") {\n" .
+            "        try_files \$webp_path \$uri =404;\n" .
+            "    }\n\n" .
+            "    try_files \$uri =404;\n" .
+            "}\n" .
+            "# END Image Converter Optimizer";
 
         return $rules;
     }

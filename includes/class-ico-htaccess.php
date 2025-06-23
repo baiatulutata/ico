@@ -20,49 +20,45 @@ class ICO_Htaccess {
      */
     private static function get_rules() {
         $upload_dir = wp_upload_dir();
-        // Get relative paths from document root for .htaccess rules
         $webp_relative_dir = str_replace( get_home_path(), '', $upload_dir['basedir'] ) . '/webp-converted';
         $avif_relative_dir = str_replace( get_home_path(), '', $upload_dir['basedir'] ) . '/avif-converted';
-        // Note: The $upload_base variable was not actually used in the rules.
 
-        // These rules prioritize AVIF, then WebP, then fall back to original JPEG/PNG.
-        // They use 'T' flag to set Content-Type and 'E' flag to set environment variable.
-        $rules = <<<EOT
-<IfModule mod_rewrite.c>
-RewriteEngine On
-RewriteBase /
-
-# Serve AVIF if browser supports it and AVIF version exists
-RewriteCond %{HTTP_ACCEPT} image/avif
-RewriteCond %{DOCUMENT_ROOT}{$avif_relative_dir}/$1.$2.avif -f
-RewriteRule ^(wp-content/uploads/.*)\.(jpe?g|png)$ {$avif_relative_dir}/$1.$2.avif [T=image/avif,E=avif:1,L]
-
-# Serve WebP if browser supports it, AVIF was NOT served, and WebP version exists
-RewriteCond %{HTTP_ACCEPT} image/webp
-RewriteCond %{DOCUMENT_ROOT}{$webp_relative_dir}/$1.$2.webp -f
-RewriteCond %{ENV:avif} !1
-RewriteRule ^(wp-content/uploads/.*)\.(jpe?g|png)$ {$webp_relative_dir}/$1.$2.webp [T=image/webp,L]
-
-<IfModule mod_headers.c>
-# Add Vary header for Accept to ensure correct caching for different image formats
-Header append Vary Accept env=REDIRECT_ACCEPT
-</IfModule>
-</IfModule>
-EOT;
+        // Use standard strings with newlines instead of heredoc
+        $rules = "<IfModule mod_rewrite.c>\n" .
+            "RewriteEngine On\n" .
+            "RewriteBase /\n\n" .
+            "# Serve AVIF if browser supports it and AVIF version exists\n" .
+            "RewriteCond %{HTTP_ACCEPT} image/avif\n" .
+            "RewriteCond %{DOCUMENT_ROOT}{$avif_relative_dir}/$1.$2.avif -f\n" .
+            "RewriteRule ^(wp-content/uploads/.*)\\.(jpe?g|png)$ {$avif_relative_dir}/$1.$2.avif [T=image/avif,E=avif:1,L]\n\n" .
+            "# Serve WebP if browser supports it, AVIF was NOT served, and WebP version exists\n" .
+            "RewriteCond %{HTTP_ACCEPT} image/webp\n" .
+            "RewriteCond %{DOCUMENT_ROOT}{$webp_relative_dir}/$1.$2.webp -f\n" .
+            "RewriteCond %{ENV:avif} !1\n" .
+            "RewriteRule ^(wp-content/uploads/.*)\\.(jpe?g|png)$ {$webp_relative_dir}/$1.$2.webp [T=image/webp,L]\n\n" .
+            "<IfModule mod_headers.c>\n" .
+            "Header append Vary Accept env=REDIRECT_ACCEPT\n" .
+            "</IfModule>\n" .
+            "</IfModule>";
 
         return $rules;
     }
 
     /**
      * Adds the plugin's .htaccess rules to the main .htaccess file.
-     * Uses WordPress's insert_with_markers for safe management.
+     * Uses WordPress's insert_with_markers for safe management, which is WP_Filesystem aware.
      */
     public static function add_rules() {
+        // Ensure WP_Filesystem is loaded before using it or WP_Filesystem-aware functions.
+        require_once( ABSPATH . 'wp-admin/includes/file.php' );
+        WP_Filesystem();
+        global $wp_filesystem;
+
         $htaccess_file = get_home_path() . '.htaccess';
-        if ( file_exists( $htaccess_file ) && is_writable( $htaccess_file ) ) {
-            $rules = self::get_rules();
-            // insert_with_markers adds unique BEGIN/END markers to manage the block
-            insert_with_markers( $htaccess_file, 'Image Converter Optimizer', explode( "\n", $rules ) );
+        // Use WP_Filesystem::exists and is_writable
+        if ( $wp_filesystem->exists( $htaccess_file ) && $wp_filesystem->is_writable( $htaccess_file ) ) {
+            $rules_array = explode( "\n", self::get_rules() );
+            insert_with_markers( $htaccess_file, 'Image Converter Optimizer', $rules_array );
         } else {
             error_log( 'ICO Error: .htaccess file not found or not writable at: ' . $htaccess_file );
         }
@@ -70,12 +66,17 @@ EOT;
 
     /**
      * Removes the plugin's .htaccess rules from the main .htaccess file.
-     * Uses WordPress's insert_with_markers for safe removal.
+     * Uses WordPress's insert_with_markers for safe removal, which is WP_Filesystem aware.
      */
     public static function remove_rules() {
+        // Ensure WP_Filesystem is loaded.
+        require_once( ABSPATH . 'wp-admin/includes/file.php' );
+        WP_Filesystem();
+        global $wp_filesystem;
+
         $htaccess_file = get_home_path() . '.htaccess';
-        if ( file_exists( $htaccess_file ) && is_writable( $htaccess_file ) ) {
-            // Passing an empty array removes the block marked by 'Image Converter Optimizer'
+        // Use WP_Filesystem::exists and is_writable
+        if ( $wp_filesystem->exists( $htaccess_file ) && $wp_filesystem->is_writable( $htaccess_file ) ) {
             insert_with_markers( $htaccess_file, 'Image Converter Optimizer', '' );
         } else {
             error_log( 'ICO Error: .htaccess file not found or not writable at: ' . $htaccess_file );

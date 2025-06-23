@@ -1,9 +1,9 @@
 === Image Converter & Optimizer ===
 Contributors: ionutbaldazar
 Donate Link: https://woomag.ro
-Tags: webp, avif, image optimization, performance, speed, next-gen images, htaccess, nginx, image converter, lazy loading, image compression, media, core web vitals
+Tags: webp, avif, image optimization, performance
 Requires at least: 5.8
-Tested up to: 6.5.4
+Tested up to: 6.8
 Requires PHP: 7.4
 Stable tag: 1.0.0
 License: GPL-2.0+

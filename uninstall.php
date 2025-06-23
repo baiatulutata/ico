@@ -4,6 +4,11 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
     die;
 }
 
+// Ensure WP_Filesystem is loaded for file operations.
+require_once( ABSPATH . 'wp-admin/includes/file.php' );
+WP_Filesystem();
+global $wp_filesystem;
+
 // Clear any scheduled cron jobs associated with the plugin.
 wp_clear_scheduled_hook( 'ico_cron_hook' );
 
@@ -20,11 +25,21 @@ $wpdb->query( "DROP TABLE IF EXISTS $table_name" );
 delete_post_meta_by_key( '_ico_converted_status' );
 
 // Remove .htaccess rules.
+// This requires ICO_Htaccess class. Ensure it's available or call its logic directly.
+// Given it's an uninstall script, it's safer to directly include and call.
 require_once plugin_dir_path( __FILE__ ) . 'includes/class-ico-htaccess.php';
-ICO_Htaccess::remove_rules();
+ICO_Htaccess::remove_rules(); // This method internally uses insert_with_markers, which is WP_Filesystem aware.
 flush_rewrite_rules();
 
-// Note: Deleting converted image files (webp-converted/, avif-converted/)
-// is a destructive action and is typically not done automatically on uninstall
-// to prevent accidental data loss. A user might manually revert them,
-// but the "Clear All Converted Images & Logs" button in settings does this.
+// Delete converted image directories (webp-converted/, avif-converted/).
+// Use WP_Filesystem for this as well.
+$upload_dir = wp_upload_dir();
+$webp_dir = $upload_dir['basedir'] . '/webp-converted';
+$avif_dir = $upload_dir['basedir'] . '/avif-converted';
+
+if ( $wp_filesystem->exists( $webp_dir ) ) {
+    $wp_filesystem->rmdir( $webp_dir, true ); // true for recursive deletion
+}
+if ( $wp_filesystem->exists( $avif_dir ) ) {
+    $wp_filesystem->rmdir( $avif_dir, true ); // true for recursive deletion
+}

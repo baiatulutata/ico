@@ -19,6 +19,11 @@ class ICO_Compatibility {
      * @return array An associative array of checks, statuses, and messages.
      */
     public static function get_all_checks() {
+        // Ensure WP_Filesystem is loaded for file existence/writability checks.
+        require_once( ABSPATH . 'wp-admin/includes/file.php' );
+        WP_Filesystem();
+        global $wp_filesystem;
+
         return [
             'php_version' => [
                 'label'    => 'PHP Version',
@@ -117,33 +122,50 @@ class ICO_Compatibility {
         if ( ! self::is_imagemagick_installed() ) {
             return false;
         }
-        // Imagick::queryFormats() returns an array of supported formats.
-        // AVIF support typically requires a recent Imagick version (e.g., 3.4.4+)
-        // and Imagick library 7.0.10-53 or higher.
         return in_array( 'AVIF', Imagick::queryFormats() );
     }
 
     /**
-     * Checks if the .htaccess file exists and is writable.
+     * Checks if the .htaccess file exists and is writable using WP_Filesystem.
      * This is only relevant for Apache servers.
+     *
      * @return bool
      */
     public static function is_htaccess_writable() {
+        // Ensure WP_Filesystem is loaded for file operations.
+        require_once( ABSPATH . 'wp-admin/includes/file.php' );
+        WP_Filesystem();
+        global $wp_filesystem;
+
+        // Safely access, unslash, and sanitize $_SERVER['SERVER_SOFTWARE']
+        $server_software = '';
+        if ( isset( $_SERVER['SERVER_SOFTWARE'] ) ) {
+            $server_software = sanitize_text_field( wp_unslash( $_SERVER['SERVER_SOFTWARE'] ) );
+        }
+
         // This check is not relevant for Nginx or IIS, so return true if not Apache.
-        if ( strpos( $_SERVER['SERVER_SOFTWARE'], 'Apache' ) === false ) {
+        if ( strpos( $server_software, 'Apache' ) === false ) {
             return true;
         }
         $htaccess_file = get_home_path() . '.htaccess';
-        // Check if file exists and is writable, or if directory is writable (so it can be created)
-        return ( file_exists( $htaccess_file ) && is_writable( $htaccess_file ) ) || is_writable( dirname( $htaccess_file ) );
+
+        // Use WP_Filesystem::exists and is_writable
+        // Check if file exists and is writable, or if parent directory is writable (so it can be created)
+        return ( $wp_filesystem->exists( $htaccess_file ) && $wp_filesystem->is_writable( $htaccess_file ) ) || $wp_filesystem->is_writable( dirname( $htaccess_file ) );
     }
 
     /**
-     * Checks if the wp-content/uploads base directory is writable.
+     * Checks if the wp-content/uploads base directory is writable using WP_Filesystem.
      * @return bool
      */
     public static function are_upload_dirs_writable() {
+        // Ensure WP_Filesystem is loaded for file operations.
+        require_once( ABSPATH . 'wp-admin/includes/file.php' );
+        WP_Filesystem();
+        global $wp_filesystem;
+
         $upload_dir = wp_upload_dir();
-        return is_writable( $upload_dir['basedir'] );
+        // Use WP_Filesystem::is_writable
+        return $wp_filesystem->is_writable( $upload_dir['basedir'] );
     }
 }

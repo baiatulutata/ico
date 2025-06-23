@@ -22,12 +22,18 @@ class ICO_Converter {
      * @return array|WP_Error An array of results for each converted size, or WP_Error on failure.
      */
     public static function convert_image( $attachment_id, $format = 'webp', $quality = 82 ) {
+        // Ensure WP_Filesystem is loaded for file operations.
+        require_once( ABSPATH . 'wp-admin/includes/file.php' );
+        WP_Filesystem();
+        global $wp_filesystem;
+
         if ( ! in_array( $format, array( 'webp', 'avif' ) ) ) {
             return new WP_Error( 'ico_invalid_format', 'Invalid format specified.' );
         }
 
         $file_path = get_attached_file( $attachment_id ); // Path to the full-size original image.
-        if ( ! $file_path || ! file_exists( $file_path ) ) {
+        // Use WP_Filesystem::exists
+        if ( ! $file_path || ! $wp_filesystem->exists( $file_path ) ) {
             return new WP_Error( 'ico_file_not_found', 'Original image file not found for attachment ID ' . $attachment_id . '.' );
         }
 
@@ -40,7 +46,6 @@ class ICO_Converter {
         }
 
         $upload_dir = wp_upload_dir();
-        // Base directory for converted images (e.g., /wp-content/uploads/webp-converted)
         $converted_dir_base = $upload_dir['basedir'] . '/' . $format . '-converted';
 
         $metadata = wp_get_attachment_metadata( $attachment_id );
@@ -48,14 +53,13 @@ class ICO_Converter {
             return new WP_Error( 'ico_no_metadata', 'Could not retrieve image metadata for attachment ID ' . $attachment_id . '.' );
         }
 
-        $converted_files = []; // Stores results for each size processed
-        $original_upload_path = dirname( $file_path ); // Directory of the original image and its sizes
+        $converted_files = [];
+        $original_upload_path = dirname( $file_path );
 
-        // Prepare list of all image sizes to process (including 'full')
         $images_to_process = [
             'full' => [
                 'file' => basename( $file_path ),
-                'path' => $file_path, // Full path to the original file
+                'path' => $file_path,
             ],
         ];
         if ( isset( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
@@ -63,13 +67,13 @@ class ICO_Converter {
                 if ( ! empty( $size_data['file'] ) ) {
                     $images_to_process[ $size_name ] = [
                         'file' => $size_data['file'],
-                        'path' => trailingslashit( $original_upload_path ) . $size_data['file'], // Full path for intermediate sizes
+                        'path' => trailingslashit( $original_upload_path ) . $size_data['file'],
                     ];
                 }
             }
         }
 
-        // Get conditional conversion settings from plugin options
+        // Get conditional conversion settings
         $ico_options = get_option(ICO_SETTINGS_SLUG);
         $conditional_conversion_enabled = isset($ico_options['conditional_conversion_enabled']) && $ico_options['conditional_conversion_enabled'];
         $min_savings_percentage = isset($ico_options['min_savings_percentage']) ? (float) $ico_options['min_savings_percentage'] : 0;
@@ -77,42 +81,39 @@ class ICO_Converter {
         foreach ( $images_to_process as $size_name => $image_info ) {
             $original_filepath = $image_info['path'];
 
-            // Ensure the original file for this size actually exists
-            if ( ! file_exists( $original_filepath ) ) {
+            // Use WP_Filesystem::exists
+            if ( ! $wp_filesystem->exists( $original_filepath ) ) {
                 $converted_files[ $size_name ] = [
                     'status' => 'failed',
                     'message' => "Original file missing for size '{$size_name}': " . $original_filepath
                 ];
-                continue; // Skip to the next size
+                continue;
             }
 
-            // Construct the path for the new converted image
-            // E.g., /wp-content/uploads/webp-converted/2025/06/my-image-150x150.jpg.webp
             $relative_path_segment = str_replace( $upload_dir['basedir'], '', $original_filepath );
             $new_file_path = $converted_dir_base . $relative_path_segment . '.' . $format;
 
-            // Ensure the directory for the new converted image exists
             $new_file_dir = dirname( $new_file_path );
-            if ( ! is_dir( $new_file_dir ) ) {
-                wp_mkdir_p( $new_file_dir );
+            // Use WP_Filesystem::mkdir
+            if ( ! $wp_filesystem->is_dir( $new_file_dir ) ) {
+                $wp_filesystem->mkdir( $new_file_dir, 0755 );
             }
 
-            // Check if the converted file already exists to avoid redundant conversions
-            if ( file_exists( $new_file_path ) ) {
-                $original_size = filesize( $original_filepath );
-                $converted_size = filesize( $new_file_path );
+            // Use WP_Filesystem::exists
+            if ( $wp_filesystem->exists( $new_file_path ) ) {
+                $original_size = $wp_filesystem->size( $original_filepath ); // Use WP_Filesystem::size
+                $converted_size = $wp_filesystem->size( $new_file_path );   // Use WP_Filesystem::size
                 $converted_files[ $size_name ] = [
                     'path'          => $new_file_path,
                     'original_size' => $original_size,
                     'converted_size' => $converted_size,
                     'savings'       => $original_size - $converted_size,
-                    'status'        => 'skipped_exists', // Specific status for logging
+                    'status'        => 'skipped_exists',
                 ];
-                continue; // Skip to the next size
+                continue;
             }
 
-            // Get WordPress image editor instance
-            $editor = wp_get_image_editor( $original_filepath );
+            $editor = wp_get_image_editor( $original_filepath ); // wp_get_image_editor is WP_Filesystem aware internally
             if ( is_wp_error( $editor ) ) {
                 $converted_files[ $size_name ] = [
                     'status' => 'failed',
@@ -121,34 +122,31 @@ class ICO_Converter {
                 continue;
             }
 
-            $editor->set_quality( $quality ); // Set quality before saving
-            $saved = $editor->save( $new_file_path, 'image/' . $format ); // Attempt to save the converted image
+            $editor->set_quality( $quality );
+            $saved = $editor->save( $new_file_path, 'image/' . $format ); // wp_image_editor::save also uses WP_Filesystem internally
 
             if ( ! is_wp_error( $saved ) ) {
-                $original_size = filesize( $original_filepath );
-                $converted_size = filesize( $saved['path'] );
+                $original_size = $wp_filesystem->size( $original_filepath ); // Use WP_Filesystem::size
+                $converted_size = $wp_filesystem->size( $saved['path'] );   // Use WP_Filesystem::size
 
-                // --- CONDITIONAL CONVERSION LOGIC (NEW) ---
-                $is_larger = $converted_size >= $original_size; // Is the converted file size equal to or larger?
+                $is_larger = $converted_size >= $original_size;
                 $actual_savings_percentage = ($original_size > 0) ? (($original_size - $converted_size) / $original_size) * 100 : 0;
-                $below_threshold = $actual_savings_percentage < $min_savings_percentage; // Is savings below the set minimum?
+                $below_threshold = $actual_savings_percentage < $min_savings_percentage;
 
                 if ($conditional_conversion_enabled && ($is_larger || $below_threshold)) {
-                    // Converted file is larger or savings are too small, so delete it.
-                    unlink($saved['path']); // Delete the file we just created
+                    // Use WP_Filesystem::delete to remove the file
+                    $wp_filesystem->delete($saved['path']);
                     $converted_files[ $size_name ] = [
-                        'path'          => '', // No valid converted path saved
+                        'path'          => '',
                         'original_size' => $original_size,
-                        'converted_size' => 0, // No converted size saved as file was discarded
+                        'converted_size' => 0,
                         'savings'       => 0,
-                        'status'        => 'skipped_size', // Specific status for logging
+                        'status'        => 'skipped_size',
                         'message'       => "Skipped: Converted file is larger or savings ({$actual_savings_percentage}%) below {$min_savings_percentage}% threshold.",
                     ];
-                    continue; // Skip to the next size, don't log as success
+                    continue;
                 }
-                // --- END CONDITIONAL CONVERSION LOGIC ---
 
-                // If not skipped, it's a success
                 $converted_files[ $size_name ] = [
                     'path'          => $saved['path'],
                     'original_size' => $original_size,
@@ -157,7 +155,6 @@ class ICO_Converter {
                     'status'        => 'success',
                 ];
             } else {
-                // Image editor failed to save the file
                 $converted_files[ $size_name ] = [
                     'status' => 'failed',
                     'message' => $saved->get_error_message() . " for size '{$size_name}'"
@@ -165,8 +162,6 @@ class ICO_Converter {
             }
         }
 
-        // Return the array of detailed conversion results for each size to the caller (e.g., ICO_Db::log_conversion).
-        // This array will be processed by log_conversion to determine the overall status for the attachment/format.
         return $converted_files;
     }
 
@@ -195,54 +190,49 @@ class ICO_Converter {
      * @return int|false Number of directories cleared (0, 1, or 2) on success, false on error.
      */
     public static function delete_all_converted_files() {
+        // Ensure WP_Filesystem is loaded for file operations.
+        require_once( ABSPATH . 'wp-admin/includes/file.php' );
+        WP_Filesystem();
+        global $wp_filesystem;
+
         $upload_dir = wp_upload_dir();
         $webp_dir = $upload_dir['basedir'] . '/webp-converted';
         $avif_dir = $upload_dir['basedir'] . '/avif-converted';
 
         $deleted_count = 0;
 
-        // Anonymous function to recursively delete a directory
-        $delete_recursive = function( $dir ) use ( &$delete_recursive ) {
-            if ( ! file_exists( $dir ) || ! is_dir( $dir ) ) {
-                return true; // Directory doesn't exist, nothing to delete.
-            }
-            // Use RecursiveDirectoryIterator for robust deletion of contents
-            $it = new RecursiveDirectoryIterator( $dir, RecursiveDirectoryIterator::SKIP_DOTS );
-            $files = new RecursiveIteratorIterator( $it, RecursiveIteratorIterator::CHILD_FIRST );
-            foreach( $files as $file ) {
-                if ( $file->isDir() ) {
-                    @rmdir( $file->getRealPath() ); // @ to suppress warnings on non-empty dirs (though CHILD_FIRST should prevent)
-                } else {
-                    @unlink( $file->getRealPath() ); // @ to suppress warnings if file is locked/permission denied
-                }
-            }
-            return @rmdir( $dir ); // @ to suppress warnings if root dir is locked
-        };
-
-        // Try to delete and recreate webp directory
-        if ( $delete_recursive( $webp_dir ) ) {
-            if ( wp_mkdir_p( $webp_dir ) ) { // Recreate it
+        // Use WP_Filesystem::rmdir( $path, $recursive = false )
+        // It's recommended to check for directory existence first
+        if ( $wp_filesystem->is_dir( $webp_dir ) ) {
+            if ( $wp_filesystem->rmdir( $webp_dir, true ) ) { // true for recursive deletion
                 $deleted_count++;
             } else {
-                error_log( 'ICO Error: Failed to recreate WebP directory after deletion: ' . $webp_dir );
-                return false; // Indicate partial failure
+                error_log( 'ICO Error: Failed to delete WebP converted directory: ' . $webp_dir );
+                return false;
             }
-        } else {
-            error_log( 'ICO Error: Failed to delete WebP converted directory: ' . $webp_dir );
-            return false; // Indicate failure
+        }
+        // Always try to recreate the directory, even if it didn't exist or deletion failed (to ensure it's there)
+        if ( ! $wp_filesystem->is_dir( $webp_dir ) ) {
+            if ( ! $wp_filesystem->mkdir( $webp_dir, 0755 ) ) {
+                error_log( 'ICO Error: Failed to recreate WebP directory after deletion: ' . $webp_dir );
+                return false;
+            }
         }
 
-        // Try to delete and recreate avif directory
-        if ( $delete_recursive( $avif_dir ) ) {
-            if ( wp_mkdir_p( $avif_dir ) ) { // Recreate it
+
+        if ( $wp_filesystem->is_dir( $avif_dir ) ) {
+            if ( $wp_filesystem->rmdir( $avif_dir, true ) ) { // true for recursive deletion
                 $deleted_count++;
             } else {
-                error_log( 'ICO Error: Failed to recreate AVIF directory after deletion: ' . $avif_dir );
-                return false; // Indicate partial failure
+                error_log( 'ICO Error: Failed to delete AVIF converted directory: ' . $avif_dir );
+                return false;
             }
-        } else {
-            error_log( 'ICO Error: Failed to delete AVIF converted directory: ' . $avif_dir );
-            return false; // Indicate failure
+        }
+        if ( ! $wp_filesystem->is_dir( $avif_dir ) ) {
+            if ( ! $wp_filesystem->mkdir( $avif_dir, 0755 ) ) {
+                error_log( 'ICO Error: Failed to recreate AVIF directory after deletion: ' . $avif_dir );
+                return false;
+            }
         }
 
         return $deleted_count;

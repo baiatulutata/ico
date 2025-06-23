@@ -11,6 +11,11 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+// Define a cache group for plugin's database queries.
+if ( ! defined( 'ICO_CACHE_GROUP' ) ) {
+    define( 'ICO_CACHE_GROUP', 'ico_db_cache' );
+}
+
 class ICO_Db {
 
     /**
@@ -21,7 +26,6 @@ class ICO_Db {
         $table_name = $wpdb->prefix . 'ico_conversion_logs';
         $charset_collate = $wpdb->get_charset_collate();
 
-        // SQL statement for creating the table. Removed comments that caused dbDelta issues.
         $sql = "CREATE TABLE $table_name (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             attachment_id bigint(20) unsigned NOT NULL,
@@ -46,19 +50,17 @@ class ICO_Db {
 
     /**
      * Logs a conversion attempt (success, failure, or skipped).
-     * This method logs or updates the *overall* status for a specific format and attachment,
-     * aggregating results from all sizes.
      *
      * @param int            $attachment_id    The ID of the attachment.
      * @param string         $format           The target format ('webp' or 'avif').
-     * @param array|WP_Error $converter_result The result from ICO_Converter::convert_image (array of size data or WP_Error).
+     * @param array|WP_Error $converter_result The result from ICO_Converter::convert_image.
      * @return bool True on success, false on failure to log.
      */
     public static function log_conversion( $attachment_id, $format, $converter_result ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ico_conversion_logs';
 
-        $status = 'failed'; // Default status
+        $status = 'failed';
         $log_message = '';
         $total_original_size = 0;
         $total_converted_size = 0;
@@ -68,10 +70,10 @@ class ICO_Db {
             $status = 'failed';
             $log_message = $converter_result->get_error_message();
         } else if ( is_array( $converter_result ) && ! empty( $converter_result ) ) {
-            $any_successful_conversion = false; // Was any size actually converted this run?
-            $any_skipped_by_size = false; // Was any size skipped due to size?
-            $any_skipped_by_exists = false; // Was any size skipped due to existing?
-            $any_failed_size = false; // Was any size explicitly failed during iteration?
+            $any_successful_conversion = false;
+            $any_skipped_by_size = false;
+            $any_skipped_by_exists = false;
+            $any_failed_size = false;
 
             foreach ( $converter_result as $size_data ) {
                 if (isset($size_data['status'])) {
@@ -82,19 +84,18 @@ class ICO_Db {
                         $total_savings += $size_data['savings'];
                     } elseif ($size_data['status'] === 'skipped_size') {
                         $any_skipped_by_size = true;
-                        $total_original_size += $size_data['original_size']; // Still count original size for overall stats
+                        $total_original_size += $size_data['original_size'];
                     } elseif ($size_data['status'] === 'skipped_exists') {
                         $any_skipped_by_exists = true;
                         $total_original_size += $size_data['original_size'];
-                        $total_converted_size += $size_data['converted_size']; // Use size of existing converted file
-                        $total_savings += $size_data['savings']; // Use savings of existing converted file
+                        $total_converted_size += $size_data['converted_size'];
+                        $total_savings += $size_data['savings'];
                     } elseif ($size_data['status'] === 'failed') {
                         $any_failed_size = true;
                     }
                 }
             }
 
-            // Determine the overall status for this format/attachment combination
             if ( $any_successful_conversion ) {
                 $status = 'success';
                 $log_message = 'Successfully converted ' . count(array_filter($converter_result, function($s){ return isset($s['status']) && $s['status'] === 'success'; })) . ' sizes.';
@@ -102,20 +103,17 @@ class ICO_Db {
                 $status = 'skipped_size';
                 $log_message = 'Conversion skipped for some sizes due to larger file size or insufficient savings.';
             } elseif ( $any_skipped_by_exists && !$any_successful_conversion && !$any_failed_size ) {
-                // Only mark as 'skipped_exists' if no new conversions or failures happened
                 $status = 'skipped_exists';
                 $log_message = 'Conversion skipped for some sizes as they already existed.';
             } elseif ( $any_failed_size ) {
                 $status = 'failed';
                 $log_message = 'Conversion failed for one or more image sizes.';
             } else {
-                // Fallback for cases where no specific success/skip reason is determined
                 $status = 'failed';
                 $log_message = 'No sizes converted successfully or skipped due to specific reasons.';
             }
 
         } else {
-            // Case where converter returns empty array or null, indicating nothing to convert or no eligible sizes
             $status = 'failed';
             $log_message = 'No valid image sizes found for conversion or converter returned empty result.';
         }
@@ -133,8 +131,6 @@ class ICO_Db {
 
         $format_types = array( '%d', '%s', '%d', '%d', '%d', '%s', '%s', '%s' );
 
-        // Check if a previous log entry for this attachment_id and format exists
-        // We update the most recent one if it exists, otherwise insert a new one.
         $existing_log_id = $wpdb->get_var(
             $wpdb->prepare(
                 "SELECT id FROM {$table_name} WHERE attachment_id = %d AND format = %s ORDER BY conversion_date DESC LIMIT 1",
@@ -143,13 +139,16 @@ class ICO_Db {
             )
         );
 
+        $result = false;
         if ( $existing_log_id ) {
-            $updated = $wpdb->update( $table_name, $data, array( 'id' => $existing_log_id ), $format_types, array( '%d' ) );
-            return (bool) $updated;
+            $result = $wpdb->update( $table_name, $data, array( 'id' => $existing_log_id ), $format_types, array( '%d' ) );
         } else {
-            $inserted = $wpdb->insert( $table_name, $data, $format_types );
-            return (bool) $inserted;
+            $result = $wpdb->insert( $table_name, $data, $format_types );
         }
+
+        self::invalidate_dashboard_caches( $attachment_id );
+
+        return (bool) $result;
     }
 
 
@@ -159,8 +158,15 @@ class ICO_Db {
      * @return int Total images count.
      */
     public static function get_total_images_count() {
-        $count = wp_count_posts( 'attachment' );
-        return isset( $count->inherit ) ? $count->inherit : 0; // 'inherit' status is for attachments
+        $cache_key = 'ico_total_images_count';
+        $count = wp_cache_get( $cache_key, ICO_CACHE_GROUP );
+
+        if ( false === $count ) {
+            $count_posts = wp_count_posts( 'attachment' );
+            $count = isset( $count_posts->inherit ) ? $count_posts->inherit : 0;
+            wp_cache_set( $cache_key, $count, ICO_CACHE_GROUP, MINUTE_IN_SECONDS * 5 );
+        }
+        return absint( $count );
     }
 
     /**
@@ -171,9 +177,16 @@ class ICO_Db {
     public static function get_webp_converted_count() {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ico_conversion_logs';
-        $count = $wpdb->get_var(
-            "SELECT COUNT(DISTINCT attachment_id) FROM $table_name WHERE format = 'webp' AND status = 'success'"
-        );
+        $cache_key = 'ico_webp_converted_count';
+        $count = wp_cache_get( $cache_key, ICO_CACHE_GROUP );
+
+        if ( false === $count ) {
+            // Pass raw SQL and arguments directly to get_var. It handles prepare internally.
+            $count = $wpdb->get_var(
+                $wpdb->prepare( "SELECT COUNT(DISTINCT attachment_id) FROM {$table_name} WHERE format = %s AND status = %s", 'webp', 'success' )
+            );
+            wp_cache_set( $cache_key, $count, ICO_CACHE_GROUP, MINUTE_IN_SECONDS * 5 );
+        }
         return absint( $count );
     }
 
@@ -185,32 +198,43 @@ class ICO_Db {
     public static function get_avif_converted_count() {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ico_conversion_logs';
-        $count = $wpdb->get_var(
-            "SELECT COUNT(DISTINCT attachment_id) FROM $table_name WHERE format = 'avif' AND status = 'success'"
-        );
+        $cache_key = 'ico_avif_converted_count';
+        $count = wp_cache_get( $cache_key, ICO_CACHE_GROUP );
+
+        if ( false === $count ) {
+            // Pass raw SQL and arguments directly to get_var. It handles prepare internally.
+            $count = $wpdb->get_var(
+                $wpdb->prepare( "SELECT COUNT(DISTINCT attachment_id) FROM {$table_name} WHERE format = %s AND status = %s", 'avif', 'success' )
+            );
+            wp_cache_set( $cache_key, $count, ICO_CACHE_GROUP, MINUTE_IN_SECONDS * 5 );
+        }
         return absint( $count );
     }
 
     /**
      * Gets the count of images that have been successfully converted for at least one format.
-     * This is useful for overall "converted" count vs "unconverted".
      *
      * @return int
      */
     public static function get_converted_images_count() {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ico_conversion_logs';
+        $cache_key = 'ico_overall_converted_count';
+        $count = wp_cache_get( $cache_key, ICO_CACHE_GROUP );
 
-        // Count unique attachment IDs that have at least one 'success' conversion
-        $count = $wpdb->get_var(
-            "SELECT COUNT(DISTINCT attachment_id) FROM $table_name WHERE status = 'success'"
-        );
-
+        if ( false === $count ) {
+            // Pass raw SQL and arguments directly to get_var. It handles prepare internally.
+            $count = $wpdb->get_var(
+                $wpdb->prepare( "SELECT COUNT(DISTINCT attachment_id) FROM {$table_name} WHERE status = %s", 'success' )
+            );
+            wp_cache_set( $cache_key, $count, ICO_CACHE_GROUP, MINUTE_IN_SECONDS * 5 );
+        }
         return absint( $count );
     }
 
     /**
      * Retrieves a paginated list of media attachments with their conversion status.
+     * This method is heavily cached.
      *
      * @param int $per_page Number of items per page.
      * @param int $page     Current page number.
@@ -218,7 +242,14 @@ class ICO_Db {
      */
     public static function get_media_with_conversion_status( $per_page = 20, $page = 1 ) {
         global $wpdb;
-        $offset = ( $page - 1 ) * $per_page;
+        $table_name = $wpdb->prefix . 'ico_conversion_logs';
+
+        $cache_key = 'ico_media_status_' . md5( $per_page . '_' . $page );
+        $cached_data = wp_cache_get( $cache_key, ICO_CACHE_GROUP );
+
+        if ( false !== $cached_data ) {
+            return $cached_data;
+        }
 
         $attachments_query = new WP_Query( array(
             'post_type'      => 'attachment',
@@ -229,38 +260,41 @@ class ICO_Db {
             'fields'         => 'ids',
             'orderby'        => 'ID',
             'order'          => 'DESC',
-            'no_found_rows'  => false, // We need found_posts for pagination
+            'no_found_rows'  => false,
         ) );
 
         $image_ids = $attachments_query->posts;
         $images_data = [];
 
         if ( ! empty( $image_ids ) ) {
-            $table_name = $wpdb->prefix . 'ico_conversion_logs';
-            $ids_in = implode( ',', array_map( 'absint', $image_ids ) );
+            // Prepare placeholders for the IN clause securely.
+            $placeholders = implode( ', ', array_fill( 0, count( $image_ids ), '%d' ) );
+            // Arguments for the prepare call. $image_ids contains absint'd IDs.
+            $query_args_for_prepare = array_merge( $image_ids, $image_ids ); // For two IN clauses
 
-            // Fetch ALL latest conversion statuses for these images, regardless of success.
+
+            // Pass the raw SQL and arguments directly to get_results. It handles prepare internally.
             $results = $wpdb->get_results(
-                "SELECT 
-                    l.attachment_id, 
-                    l.format, 
-                    l.status, 
-                    l.original_size_total, 
-                    l.converted_size_total 
-                FROM {$table_name} l
-                INNER JOIN (
-                    SELECT 
-                        attachment_id, 
-                        format, 
-                        MAX(conversion_date) as max_date 
-                    FROM {$table_name} 
-                    WHERE attachment_id IN ($ids_in) 
-                    GROUP BY attachment_id, format
-                ) AS latest_logs
-                ON l.attachment_id = latest_logs.attachment_id 
-                AND l.format = latest_logs.format 
-                AND l.conversion_date = latest_logs.max_date
-                WHERE l.attachment_id IN ($ids_in)", // Redundant WHERE but good for safety
+                $wpdb->prepare( "SELECT 
+                            l.attachment_id, 
+                            l.format, 
+                            l.status, 
+                            l.original_size_total, 
+                            l.converted_size_total 
+                        FROM {$table_name} l
+                        INNER JOIN (
+                            SELECT 
+                                attachment_id, 
+                                format, 
+                                MAX(conversion_date) as max_date 
+                            FROM {$table_name} 
+                            WHERE attachment_id IN ({$placeholders}) 
+                            GROUP BY attachment_id, format
+                        ) AS latest_logs
+                        ON l.attachment_id = latest_logs.attachment_id 
+                        AND l.format = latest_logs.format 
+                        AND l.conversion_date = latest_logs.max_date
+                        WHERE l.attachment_id IN ({$placeholders})", ...$query_args_for_prepare ), // Use argument unpacking (PHP 5.6+)
                 ARRAY_A
             );
 
@@ -269,7 +303,6 @@ class ICO_Db {
                 $attachment_id = $row['attachment_id'];
                 $format = $row['format'];
 
-                // Initialize if not set for this attachment
                 if ( ! isset( $conversion_status[ $attachment_id ] ) ) {
                     $conversion_status[ $attachment_id ] = [
                         'webp_status' => 'pending', 'webp_size' => 'N/A',
@@ -277,9 +310,7 @@ class ICO_Db {
                     ];
                 }
 
-                // Update based on the latest log entry's status
                 $conversion_status[ $attachment_id ][ $format . '_status' ] = $row['status'];
-                // Only show size if conversion was successful or skipped_exists (meaning a file exists)
                 if ( in_array($row['status'], ['success', 'skipped_exists']) ) {
                     $conversion_status[ $attachment_id ][ $format . '_size' ] = size_format( $row['converted_size_total'], 2 );
                 } else {
@@ -291,9 +322,12 @@ class ICO_Db {
                 $image_title = get_the_title( $id );
                 $image_src = wp_get_attachment_image_src( $id, 'thumbnail' );
                 $original_file_path = get_attached_file( $id );
-                $original_size = file_exists($original_file_path) ? size_format( filesize( $original_file_path ), 2 ) : 'N/A';
+                $original_size = 'N/A';
+                // Check for file existence using native PHP file_exists for original file, as it's not managed by WP_Filesystem here.
+                if ( $original_file_path && file_exists( $original_file_path ) ) {
+                    $original_size = size_format( filesize( $original_file_path ), 2 );
+                }
 
-                // Retrieve status from the aggregated conversion_status array, defaulting to 'pending'
                 $current_webp_status = $conversion_status[ $id ]['webp_status'] ?? 'pending';
                 $current_webp_size = $conversion_status[ $id ]['webp_size'] ?? 'N/A';
                 $current_avif_status = $conversion_status[ $id ]['avif_status'] ?? 'pending';
@@ -312,41 +346,44 @@ class ICO_Db {
             }
         }
 
-        return [
+        $response_data = [
             'images'      => $images_data,
             'total_pages' => $attachments_query->max_num_pages,
             'total_images' => $attachments_query->found_posts,
         ];
+
+        wp_cache_set( $cache_key, $response_data, ICO_CACHE_GROUP, MINUTE_IN_SECONDS * 1 ); // Cache for 1 minute for dashboard
+        return $response_data;
     }
 
     /**
      * Gets a batch of unprocessed images for bulk conversion.
-     * An image is considered "unprocessed" if its `_ico_converted_status` post meta is
-     * missing or not set to 'complete'. This allows re-processing of failed/incomplete attempts.
+     * Uses WP_Query, which handles caching internally for post queries.
      *
      * @param int $limit The number of images (attachment IDs) to fetch in this batch.
      * @return WP_Query A WP_Query object containing the unprocessed attachment IDs.
      */
     public static function get_unprocessed_images_for_bulk( $limit = 25 ) {
+        // This method uses WP_Query, which is the recommended high-level function
+        // and handles its own SQL preparation and object caching.
         $args = array(
             'post_type'      => 'attachment',
-            'post_mime_type' => 'image', // Only get image attachments
-            'post_status'    => 'inherit', // Default status for attachments
+            'post_mime_type' => 'image',
+            'post_status'    => 'inherit',
             'posts_per_page' => $limit,
-            'fields'         => 'ids', // Only retrieve IDs for performance
-            'orderby'        => 'ID', // Order by ID for consistent batching
+            'fields'         => 'ids',
+            'orderby'        => 'ID',
             'order'          => 'ASC',
             'meta_query'     => array(
-                'relation' => 'OR', // Images should match either condition
+                'relation' => 'OR',
                 array(
                     'key'     => '_ico_converted_status',
-                    'compare' => 'NOT EXISTS', // Image has never been touched by the plugin
+                    'compare' => 'NOT EXISTS',
                 ),
                 array(
                     'key'     => '_ico_converted_status',
                     'value'   => 'complete',
-                    'compare' => '!=',         // Image has been processed, but not marked 'complete'
-                    // This catches 'pending', 'incomplete', 'failed', 'partial_failure', etc.
+                    'compare' => '!=',
                 ),
             ),
         );
@@ -355,6 +392,7 @@ class ICO_Db {
 
     /**
      * Gets the latest conversion status for a specific attachment ID and format from the logs table.
+     * This method is cached.
      *
      * @param int    $attachment_id The ID of the attachment.
      * @param string $format        The format ('webp' or 'avif').
@@ -363,19 +401,29 @@ class ICO_Db {
     public static function get_latest_conversion_status_for_attachment_format( $attachment_id, $format ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ico_conversion_logs';
+        $cache_key = 'ico_latest_status_' . $attachment_id . '_' . $format;
+        $status = wp_cache_get( $cache_key, ICO_CACHE_GROUP );
 
-        $status = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT status FROM {$table_name} WHERE attachment_id = %d AND format = %s ORDER BY conversion_date DESC LIMIT 1",
-                $attachment_id,
-                $format
-            )
-        );
-        return $status ? $status : 'pending'; // Default to 'pending' if no log entry is found
+        if ( false === $status ) {
+            // Pass raw SQL and arguments directly to get_var. It handles prepare internally.
+            $status = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT status FROM {$table_name} WHERE attachment_id = %d AND format = %s ORDER BY conversion_date DESC LIMIT 1",
+                    $attachment_id,
+                    $format
+                )
+            );
+            $status = $status ? $status : 'pending';
+            wp_cache_set( $cache_key, $status, ICO_CACHE_GROUP, MINUTE_IN_SECONDS * 5 );
+        }
+        return $status;
     }
 
     /**
      * Clears all entries from the conversion logs table.
+     * This is a direct database call as there's no high-level WP function for TRUNCATE.
+     * WordPress Coding Standards (WordPress.DB.DirectDatabaseQuery) often flag TRUNCATE,
+     * but it's often used for full table resets in plugins where `DELETE` is too slow.
      *
      * @return int|false The number of deleted rows on success, false on error.
      */
@@ -383,32 +431,66 @@ class ICO_Db {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ico_conversion_logs';
 
-        $deleted_rows = $wpdb->query( "TRUNCATE TABLE $table_name" ); // TRUNCATE is faster for full table clears
-
+        // This is a direct query and will be flagged by linters, but it's efficient for clearing tables.
+        // No WP_Cache operations apply to TRUNCATE, but we invalidate relevant caches afterward.
+        $deleted_rows = $wpdb->query( "TRUNCATE TABLE $table_name" );
         if ( false === $deleted_rows ) {
             error_log( 'ICO Error: Failed to truncate conversion logs table: ' . $wpdb->last_error );
         }
+
+        self::invalidate_all_caches();
+
         return $deleted_rows;
     }
 
     /**
      * Clears the '_ico_converted_status' meta key from all attachment posts.
-     * This ensures images are considered "unconverted" in the backend after a clear
-     * or if you want to force a re-process.
+     * Uses delete_post_meta_by_key() which is the recommended WP function.
      *
      * @return int|false The number of deleted meta rows on success, false on error.
      */
     public static function clear_attachment_conversion_meta() {
-        global $wpdb;
         $meta_key = '_ico_converted_status';
 
-        $deleted_meta = $wpdb->query(
-            $wpdb->prepare( "DELETE FROM {$wpdb->postmeta} WHERE meta_key = %s", $meta_key )
-        );
+        $deleted_meta = delete_post_meta_by_key( $meta_key );
 
         if ( false === $deleted_meta ) {
-            error_log( 'ICO Error: Failed to delete attachment conversion meta: ' . $wpdb->last_error );
+            error_log( 'ICO Error: Failed to delete attachment conversion meta.' );
         }
+
+        self::invalidate_dashboard_caches();
+
         return $deleted_meta;
+    }
+
+    /**
+     * Invalidates all caches related to the plugin's dashboard statistics and image list.
+     *
+     * @param int|null $attachment_id Optional: Invalidate specific attachment caches.
+     */
+    public static function invalidate_dashboard_caches( $attachment_id = null ) {
+        // Invalidate overall counts
+        wp_cache_delete( 'ico_total_images_count', ICO_CACHE_GROUP );
+        wp_cache_delete( 'ico_webp_converted_count', ICO_CACHE_GROUP );
+        wp_cache_delete( 'ico_avif_converted_count', ICO_CACHE_GROUP );
+        wp_cache_delete( 'ico_overall_converted_count', ICO_CACHE_GROUP );
+
+        // If a specific attachment ID is known, delete its individual status cache.
+        if ( $attachment_id ) {
+            wp_cache_delete( 'ico_latest_status_' . $attachment_id . '_webp', ICO_CACHE_GROUP );
+            wp_cache_delete( 'ico_latest_status_' . $attachment_id . '_avif', ICO_CACHE_GROUP );
+        }
+
+        // To invalidate ico_media_status_XXXXX for paginated results, you'd typically need to know all the keys,
+        // or flush the entire group if an external object cache (Redis/Memcached) is configured and supports group flushing.
+        // For general WordPress object cache (non-persistent), these page-specific caches expire in 1 minute, which is acceptable for dashboard data.
+    }
+
+    /**
+     * Invalidates all caches associated with the plugin.
+     * Called after major data changes like full clear.
+     */
+    public static function invalidate_all_caches() {
+        self::invalidate_dashboard_caches();
     }
 }
